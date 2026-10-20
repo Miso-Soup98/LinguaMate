@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>语伴界面预览</title>
+    <link rel="stylesheet" href="../src/content/youtube.css" />
+    <style>
+      body { margin: 0; background: #070b10; color: #eef4f8; font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .stage { display: grid; grid-template-columns: 1.4fr 360px; gap: 20px; padding: 24px; }
+      .player { position: relative; min-height: 420px; border-radius: 18px; overflow: hidden; background: #1b2430 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23111a22' width='160' height='160'/%3E%3C/svg%3E"); }
+      .player::after { content: ""; position: absolute; inset: 0; background: linear-gradient(transparent, rgba(0,0,0,.55)); }
+      h1 { margin: 24px 24px 0; }
+      .note { margin: 8px 24px 0; color: #9fb0bd; }
+    </style>
+  </head>
+  <body>
+    <h1>语伴界面预览</h1>
+    <p class="note">这是插件在 YouTube 上的界面样式预览，方便检查布局。真正的字幕和查词需要加载到 Chrome 扩展后使用。</p>
+    <div class="stage">
+      <div class="player" id="lm-root">
+        <div class="lm-toolbar">
+          <button class="active">语伴</button>
+          <select><option>英语</option></select>
+          <select><option>简体中文</option></select>
+          <button>逐句</button>
+          <button>听写</button>
+          <button class="active">译文</button>
+          <button class="active">侧栏</button>
+        </div>
+        <div class="lm-subs">
+          <div class="lm-line lm-line-learning" style="font-size:22px">
+            <span class="lm-word lm-rare">Language</span> is the <span class="lm-word lm-saved">road</span> map of a culture.
+          </div>
+          <div class="lm-line lm-line-native">语言是一种文化的路线图。</div>
+        </div>
+        <div class="lm-dict" style="left:72px;top:88px">
+          <div class="lm-dict-head">
+            <div class="lm-dict-word">language</div>
+            <div class="lm-dict-phonetic">/ˈlæŋɡwɪdʒ/</div>
+            <div class="lm-dict-actions"><button>朗读</button><button>认识</button></div>
+          </div>
+          <div class="lm-dict-trans">语言；语言文字</div>
+          <div class="lm-dict-senses">noun：语言、语文、措辞</div>
+          <div class="lm-dict-context">Language is the road map of a culture.</div>
+          <button class="lm-dict-save">加入生词本</button>
+        </div>
+      </div>
+      <section class="lm-panel">
+        <div class="lm-panel-tabs">
+          <button class="active">字幕</button>
+          <button>生词</button>
+          <button>学习</button>
+        </div>
+        <div class="lm-panel-body">
+          <button class="lm-cue active">
+            <div class="lm-cue-time">0:12</div>
+            <div class="lm-cue-learning">Language is the road map of a culture.</div>
+            <div class="lm-cue-native">语言是一种文化的路线图。</div>
+          </button>
+          <button class="lm-cue">
+            <div class="lm-cue-time">0:16</div>
+            <div class="lm-cue-learning">It tells you where its people come from.</div>
+            <div class="lm-cue-native">它告诉你这些人从哪里来。</div>
+          </button>
+        </div>
+        <div class="lm-mini-help">A 上一句 · S 重播 · D 下一句 · 按住可预览 · 右键直接收藏</div>
+      </section>
+    </div>
+  </body>
+</html>

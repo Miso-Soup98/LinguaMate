@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>语伴</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>语伴</h1>
+        <p>YouTube 双语字幕学习盒</p>
+      </div>
+      <label class="switch">
+        <input id="enabled" type="checkbox" />
+        <span>启用</span>
+      </label>
+    </header>
+
+    <section class="grid">
+      <label>
+        学习语言
+        <select id="learningLang"></select>
+      </label>
+      <label>
+        母语 / 译文
+        <select id="nativeLang"></select>
+      </label>
+    </section>
+
+    <section class="toggles">
+      <label><input id="autoPause" type="checkbox" /> 逐句暂停</label>
+      <label><input id="listenMode" type="checkbox" /> 听写模式</label>
+      <label><input id="showNative" type="checkbox" /> 显示译文</label>
+      <label><input id="highlightRare" type="checkbox" /> 高亮生僻词</label>
+    </section>
+
+    <section class="row">
+      <label>
+        字幕字号
+        <input id="fontSize" type="range" min="16" max="36" />
+      </label>
+      <label>
+        播放速度
+        <select id="playbackRate">
+          <option value="0.75">0.75x</option>
+          <option value="1">1.0x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+        </select>
+      </label>
+    </section>
+
+    <footer>
+      <div id="stats">生词本 0</div>
+      <button id="openOptions">打开生词本 / 闪卡</button>
+    </footer>
+    <script src="../shared/languages.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

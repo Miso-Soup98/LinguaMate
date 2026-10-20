@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>语伴 · 生词本</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <aside>
+      <h1>语伴</h1>
+      <p>生词、闪卡与设置</p>
+      <nav>
+        <button class="active" data-view="vocab">生词本</button>
+        <button data-view="cards">闪卡复习</button>
+        <button data-view="settings">设置</button>
+      </nav>
+    </aside>
+    <main>
+      <section id="view-vocab">
+        <header class="toolbar">
+          <input id="search" placeholder="搜索单词、释义或例句" />
+          <select id="statusFilter">
+            <option value="all">全部</option>
+            <option value="learning">学习中</option>
+            <option value="known">已掌握</option>
+          </select>
+          <button id="exportCsv">导出 CSV</button>
+          <button id="exportAnki">导出 Anki</button>
+        </header>
+        <div id="vocabList"></div>
+      </section>
+
+      <section id="view-cards" hidden>
+        <div id="cardBox" class="card-box">
+          <p class="muted">今天没有到期卡片。去 YouTube 收藏几个词再回来。</p>
+        </div>
+      </section>
+
+      <section id="view-settings" hidden>
+        <form id="settingsForm" class="settings">
+          <label>学习语言 <select name="learningLang"></select></label>
+          <label>母语 / 译文 <select name="nativeLang"></select></label>
+          <label>字幕字号 <input name="fontSize" type="number" min="16" max="40" /></label>
+          <label>播放速度 <input name="playbackRate" type="number" min="0.5" max="2" step="0.25" /></label>
+          <label class="check"><input name="autoPause" type="checkbox" /> 默认逐句暂停</label>
+          <label class="check"><input name="listenMode" type="checkbox" /> 默认听写模式</label>
+          <label class="check"><input name="highlightRare" type="checkbox" /> 高亮非常见词</label>
+          <label class="check"><input name="hideYoutubeCaptions" type="checkbox" /> 隐藏 YouTube 原生字幕</label>
+          <button type="submit">保存设置</button>
+        </form>
+        <article class="help">
+          <h2>快捷键</h2>
+          <p>A 上一句 · S 重播当前句 · D 下一句。按住不放会暂停预览，松开继续播放。</p>
+          <h2>网页阅读</h2>
+          <p>在任意网页选中文本后右键，选择「用语伴查阅」或「用语伴阅读」。</p>
+          <h2>关于 Netflix</h2>
+          <p>Netflix 字幕受版权和 DRM 保护，语伴不会拦截或复制其字幕流。请用 YouTube 或网页阅读模式学习。</p>
+        </article>
+      </section>
+    </main>
+    <script src="../shared/languages.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>
