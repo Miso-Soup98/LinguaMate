@@ -671,7 +671,7 @@
     ui.panelBody.querySelectorAll(".lm-vocab-item").forEach((el) => {
       el.addEventListener("click", () => {
         const item = state.vocab.find((row) => row.id === el.dataset.id);
-        if (item) speak(item.word, item.lang);
+        if (item) playPronunciation(item.word, item.lang, state.settings.accent, "");
       });
       el.addEventListener("contextmenu", (ev) => {
         ev.preventDefault();
@@ -762,12 +762,154 @@
     if (pause) videoEl()?.pause();
   }
 
-  function speak(text, lang) {
+  let currentAudio = null;
+
+  function stopSpeech() {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+
+  function bytesFromBase64(value) {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function voiceScore(voice) {
+    const name = voice.name.toLowerCase();
+    let score = 0;
+    if (name.includes("google")) score += 6;
+    if (name.includes("natural") || name.includes("neural") || name.includes("premium")) score += 8;
+    if (name.includes("aria") || name.includes("jenny") || name.includes("libby") || name.includes("sonia")) score += 3;
+    if (!voice.localService) score += 2;
+    return score;
+  }
+
+  function speakNatural(text, lang) {
     if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = lang || state.settings.learningLang;
+    const wanted = String(lang || "en-US").toLowerCase();
+    const voices = window.speechSynthesis.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith(wanted.slice(0, 5)));
+    voices.sort((a, b) => voiceScore(b) - voiceScore(a));
+    if (voices[0]) utter.voice = voices[0];
+    utter.lang = lang || "en-US";
+    utter.rate = 0.92;
     window.speechSynthesis.speak(utter);
+  }
+
+  function accentLang(lang, accent) {
+    if (String(lang || "").toLowerCase().startsWith("en")) return accent === "uk" ? "en-GB" : "en-US";
+    return lang || "en-US";
+  }
+
+  async function playPronunciation(word, lang, accent, audioUrl) {
+    stopSpeech();
+    const res = await send("LM_PRONOUNCE", {
+      text: word,
+      tl: accentLang(lang, accent),
+      audioUrl: audioUrl || ""
+    });
+    if (res && res.audio) {
+      const url = URL.createObjectURL(new Blob([bytesFromBase64(res.audio)], { type: res.mime || "audio/mpeg" }));
+      currentAudio = new Audio(url);
+      currentAudio.onended = () => URL.revokeObjectURL(url);
+      try {
+        await currentAudio.play();
+        return;
+      } catch (err) {
+        URL.revokeObjectURL(url);
+      }
+    }
+    speakNatural(word, accentLang(lang, accent));
+  }
+
+  function posLabel(pos) {
+    const labels = {
+      noun: "名词",
+      verb: "动词",
+      adjective: "形容词",
+      adverb: "副词",
+      pronoun: "代词",
+      preposition: "介词",
+      conjunction: "连词",
+      interjection: "感叹词",
+      determiner: "限定词",
+      article: "冠词",
+      numeral: "数词",
+      "phrasal verb": "短语动词",
+      idiom: "习语"
+    };
+    return labels[String(pos || "").toLowerCase()] || pos || "释义";
+  }
+
+  function renderDict(data, cue, from) {
+    const english = String(from || "").toLowerCase().startsWith("en");
+    const accent = state.settings.accent === "uk" ? "uk" : "us";
+    const entries = data.entries || [];
+    const entryHtml = entries.length
+      ? entries
+          .map((entry) => {
+            const items = (entry.items || [])
+              .map((item, index) => {
+                const synonyms = (item.synonyms || []).filter(Boolean);
+                return `<div class="lm-entry">
+                  <div class="lm-gloss">${index + 1}. ${escapeHtml(item.gloss || item.definition || "暂无释义")}</div>
+                  ${item.definition && item.gloss ? `<div class="lm-def">${escapeHtml(item.definition)}</div>` : ""}
+                  ${item.example ? `<div class="lm-ex">例：${escapeHtml(item.example)}</div>` : ""}
+                  ${synonyms.length ? `<div class="lm-syn">近义：${escapeHtml(synonyms.join("、"))}</div>` : ""}
+                </div>`;
+              })
+              .join("");
+            return `<div class="lm-pos">${escapeHtml(posLabel(entry.pos))} · ${escapeHtml(entry.pos || "")}</div>${items}`;
+          })
+          .join("")
+      : `<div class="lm-dict-senses">${(data.senses || [])
+          .map((sense) => `${escapeHtml(sense.pos)}：${escapeHtml((sense.words || []).join("、"))}`)
+          .join("<br>") || escapeHtml(data.translation || "暂无释义")}</div>`;
+    const accents = english
+      ? `<div class="lm-accents">
+          <button data-accent="us" class="${accent === "us" ? "active" : ""}">美式 US<span class="lm-ipa">${escapeHtml(data.phoneticUs || data.phonetic || "")}</span></button>
+          <button data-accent="uk" class="${accent === "uk" ? "active" : ""}">英式 UK<span class="lm-ipa">${escapeHtml(data.phoneticUk || data.phonetic || "")}</span></button>
+        </div>`
+      : `<div class="lm-accents"><button data-accent="read">朗读<span class="lm-ipa">${escapeHtml(data.phonetic || "")}</span></button></div>`;
+    ui.dict.innerHTML = `
+      <div class="lm-dict-head">
+        <div>
+          <div class="lm-dict-word">${escapeHtml(data.word)}</div>
+          <div class="lm-dict-trans">${escapeHtml(data.translation || "")}</div>
+        </div>
+        <div class="lm-dict-actions"><button data-known="1">认识</button></div>
+      </div>
+      ${accents}
+      ${entryHtml}
+      <div class="lm-dict-context">${escapeHtml(cue?.text || "")}</div>
+      <button class="lm-dict-save">加入生词本</button>
+    `;
+    ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const chosen = button.dataset.accent === "uk" ? "uk" : "us";
+        if (button.dataset.accent !== "read") {
+          state.settings.accent = chosen;
+          ui.dict.querySelectorAll("[data-accent]").forEach((item) => item.classList.toggle("active", item === button));
+          await send("LM_SET_SETTINGS", { settings: { accent: chosen } });
+        }
+        const audioUrl = chosen === "uk" ? data.audioUk : data.audioUs;
+        playPronunciation(data.word, from, chosen, audioUrl);
+      });
+    });
+    ui.dict.querySelector("[data-known]").addEventListener("click", async () => {
+      await send("LM_MARK_KNOWN", { word: data.word, lang: state.settings.learningLang, known: true });
+      state.known[`${state.settings.learningLang}:${lmNormalizeWord(data.word)}`] = true;
+      toast("已标记为认识");
+      renderCurrent();
+    });
+    ui.dict.querySelector(".lm-dict-save").addEventListener("click", () => saveWord(data.word, cue?.text, data));
+    const audioUrl = accent === "uk" ? data.audioUk : data.audioUs;
+    playPronunciation(data.word, from, accent, audioUrl);
   }
 
   function placeDict(anchor) {
@@ -775,7 +917,7 @@
       document.documentElement.appendChild(ui.dict);
     }
     const rect = anchor.getBoundingClientRect();
-    const width = 320;
+    const width = 420;
     const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
     let top = rect.bottom + 8;
     if (top > window.innerHeight - 220) top = Math.max(8, rect.top - 220);
@@ -793,35 +935,11 @@
       to: state.settings.nativeLang,
       context: cue?.text || ""
     });
-    const data = res.result || { word, translation: "", phonetic: "", senses: [] };
+    const data = res.result || { word, translation: "", phonetic: "", senses: [], entries: [] };
     ui.dict.classList.remove("lm-hidden");
     placeDict(wordEl);
-    ui.dict.innerHTML = `
-      <div class="lm-dict-head">
-        <div class="lm-dict-word">${escapeHtml(data.word)}</div>
-        <div class="lm-dict-phonetic">${escapeHtml(data.phonetic || "")}</div>
-        <div class="lm-dict-actions">
-          <button data-speak="1">朗读</button>
-          <button data-known="1">认识</button>
-        </div>
-      </div>
-      <div class="lm-dict-trans">${escapeHtml(data.translation || "暂无释义")}</div>
-      <div class="lm-dict-senses">${(data.senses || [])
-        .map((sense) => `${escapeHtml(sense.pos)}：${escapeHtml((sense.words || []).join("、"))}`)
-        .join("<br>")}</div>
-      <div class="lm-dict-context">${escapeHtml(cue?.text || "")}</div>
-      <button class="lm-dict-save">${alreadySaved ? "已在生词本" : "加入生词本"}</button>
-    `;
-    ui.dict.querySelector("[data-speak]").addEventListener("click", () => speak(data.word, from));
-    ui.dict.querySelector("[data-known]").addEventListener("click", async () => {
-      await send("LM_MARK_KNOWN", { word: data.word, lang: state.settings.learningLang, known: true });
-      state.known[`${state.settings.learningLang}:${lmNormalizeWord(data.word)}`] = true;
-      toast("已标记为认识");
-      renderCurrent();
-    });
-    ui.dict.querySelector(".lm-dict-save").addEventListener("click", () => saveWord(data.word, cue?.text, data));
+    renderDict(data, cue, from);
     if (state.settings.autoPause) videoEl()?.pause();
-    speak(data.word, state.settings.learningLang);
   }
 
   async function saveWord(word, context, lookup) {

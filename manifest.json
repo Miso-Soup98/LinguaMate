@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "default_locale": "zh_CN",
   "action": {
     "default_title": "__MSG_extName__",
@@ -28,7 +28,9 @@
     "https://youtube.com/*",
     "https://m.youtube.com/*",
     "https://translate.googleapis.com/*",
-    "https://api.mymemory.translated.net/*"
+    "https://api.mymemory.translated.net/*",
+    "https://api.dictionaryapi.dev/*",
+    "https://upload.wikimedia.org/*"
   ],
   "content_scripts": [
     {

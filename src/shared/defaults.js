@@ -10,7 +10,8 @@ const LM_DEFAULTS = {
   fontSize: 22,
   panelOpen: true,
   playbackRate: 1,
-  hideYoutubeCaptions: true
+  hideYoutubeCaptions: true,
+  accent: "us"
 };
 
 function lmMergeSettings(raw) {

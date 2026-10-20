@@ -128,13 +128,52 @@ html.lm-hide-yt-captions .caption-window {
 .lm-dict {
   position: fixed;
   z-index: 2147483000;
-  width: 320px;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(72vh, 560px);
+  overflow: auto;
   background: var(--lm-bg);
   border: 1px solid var(--lm-line);
   border-radius: 16px;
   box-shadow: var(--lm-shadow);
   padding: 14px;
 }
+
+.lm-accents {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.lm-accents button {
+  flex: 1;
+  text-align: left;
+  line-height: 1.35;
+}
+
+.lm-accents button.active {
+  background: rgba(45, 212, 191, 0.18);
+  color: var(--lm-accent);
+}
+
+.lm-ipa {
+  display: block;
+  color: var(--lm-muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.lm-pos {
+  margin-top: 12px;
+  color: var(--lm-accent);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.lm-entry { margin-top: 8px; }
+.lm-entry + .lm-entry { padding-top: 8px; border-top: 1px solid var(--lm-line); }
+.lm-gloss { font-size: 14px; }
+.lm-def, .lm-syn { color: var(--lm-muted); font-size: 12px; margin-top: 2px; }
+.lm-ex { color: #d7e3ec; font-size: 12px; margin-top: 3px; }
 
 .lm-dict-head {
   display: flex;

@@ -10,7 +10,8 @@ const DEFAULTS = {
   fontSize: 22,
   panelOpen: true,
   playbackRate: 1,
-  hideYoutubeCaptions: true
+  hideYoutubeCaptions: true,
+  accent: "us"
 };
 
 const cache = new Map();
@@ -89,6 +90,10 @@ async function handleMessage(message) {
         ok: true,
         result: await lookupWord(message.word, message.from, message.to, message.context)
       };
+    case "LM_PRONOUNCE": {
+      const clip = await pronounceClip(message.text, message.tl, message.audioUrl);
+      return { ok: true, audio: clip.audio || "", mime: clip.mime || "audio/mpeg" };
+    }
     case "LM_VOCAB_LIST":
       return { ok: true, vocab: await getVocab(), known: await getKnown() };
     case "LM_VOCAB_ADD":
@@ -230,7 +235,7 @@ async function translateText(text, from, to) {
 
 async function lookupWord(word, from, to, context) {
   const clean = String(word || "").trim();
-  if (!clean) return { word: "", translation: "", phonetic: "", senses: [] };
+  if (!clean) return { word: "", translation: "", phonetic: "", senses: [], entries: [] };
   const key = `w:${from}:${to}:${clean.toLowerCase()}`;
   const cached = cacheGet(key);
   if (cached) return cached;
@@ -239,22 +244,158 @@ async function lookupWord(word, from, to, context) {
     word: clean,
     translation: "",
     phonetic: "",
+    phoneticUs: "",
+    phoneticUk: "",
+    audioUs: "",
+    audioUk: "",
     senses: [],
+    entries: [],
     context: context || ""
   };
 
-  try {
-    const google = await translateGoogle(clean, from, to, true);
-    result.translation = google.text;
-    result.phonetic = google.phonetic;
-    result.senses = google.senses || [];
-  } catch (err) {
-    const fallback = await translateMyMemory(clean, from, to);
+  const english = String(from || "").toLowerCase().startsWith("en");
+  const [googleResult, dictionary] = await Promise.all([
+    translateGoogle(clean, from, to, true).catch(() => null),
+    english ? fetchEnglishEntry(clean) : Promise.resolve(null)
+  ]);
+
+  if (googleResult) {
+    result.translation = googleResult.text;
+    result.phonetic = googleResult.phonetic;
+    result.senses = googleResult.senses || [];
+  } else {
+    const fallback = await translateMyMemory(clean, from, to).catch(() => ({ text: "" }));
     result.translation = fallback.text;
+  }
+
+  if (dictionary) {
+    result.phoneticUs = dictionary.phoneticUs;
+    result.phoneticUk = dictionary.phoneticUk;
+    result.audioUs = dictionary.audioUs;
+    result.audioUk = dictionary.audioUk;
+    result.phonetic = dictionary.phoneticUs || dictionary.phoneticUk || result.phonetic;
+    result.entries = await translateEntries(dictionary.entries, to);
+    if (!result.translation && result.entries[0] && result.entries[0].items[0]) {
+      result.translation = result.entries[0].items[0].gloss || result.entries[0].items[0].definition;
+    }
   }
 
   cacheSet(key, result);
   return result;
+}
+
+async function fetchEnglishEntry(word) {
+  const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const entry = Array.isArray(data) ? data[0] : null;
+  if (!entry) return null;
+  const sounds = classifyPhonetics(entry.phonetics || []);
+  const entries = (entry.meanings || []).slice(0, 3).map((meaning) => ({
+    pos: meaning.partOfSpeech || "",
+    items: (meaning.definitions || []).slice(0, 2).map((item) => ({
+      definition: item.definition || "",
+      example: item.example || "",
+      synonyms: (item.synonyms || meaning.synonyms || []).slice(0, 4)
+    }))
+  }));
+  return Object.assign(sounds, { entries });
+}
+
+function classifyPhonetics(phonetics) {
+  const sounds = { phoneticUs: "", phoneticUk: "", audioUs: "", audioUk: "" };
+  phonetics.forEach((item) => {
+    const audio = item.audio || "";
+    const text = item.text || "";
+    const uk = /[-_/]uk\b|british|gb\b/i.test(audio);
+    const us = /[-_/]us\b|american/i.test(audio);
+    if (uk) {
+      if (text && !sounds.phoneticUk) sounds.phoneticUk = text;
+      if (audio && !sounds.audioUk) sounds.audioUk = audio;
+    } else if (us) {
+      if (text && !sounds.phoneticUs) sounds.phoneticUs = text;
+      if (audio && !sounds.audioUs) sounds.audioUs = audio;
+    } else if (text) {
+      if (!sounds.phoneticUs) sounds.phoneticUs = text;
+      if (!sounds.phoneticUk) sounds.phoneticUk = text;
+    }
+  });
+  if (!sounds.phoneticUk) sounds.phoneticUk = sounds.phoneticUs;
+  if (!sounds.phoneticUs) sounds.phoneticUs = sounds.phoneticUk;
+  return sounds;
+}
+
+async function translateEntries(entries, to) {
+  const definitions = [];
+  entries.forEach((entry) => {
+    entry.items.forEach((item) => definitions.push(item.definition));
+  });
+  const glosses = await translateLines(definitions, "en", to);
+  let index = 0;
+  return entries.map((entry) => ({
+    pos: entry.pos,
+    items: entry.items.map((item) => {
+      const gloss = glosses[index] || "";
+      index += 1;
+      return {
+        gloss,
+        definition: item.definition,
+        example: item.example,
+        synonyms: item.synonyms
+      };
+    })
+  }));
+}
+
+async function translateLines(lines, from, to) {
+  const clean = lines.map((line) => String(line || "").replace(/\s+/g, " ").trim());
+  if (!clean.some(Boolean) || from === to) return clean;
+  const packed = clean
+    .map((line, index) => (line ? `[${index}] ${line}` : ""))
+    .filter(Boolean)
+    .join("\n");
+  try {
+    const translated = await translateGoogle(packed, from, to, false);
+    const found = {};
+    const pattern = /\[(\d+)\]\s*([\s\S]*?)(?=\s*\[\d+\]|$)/g;
+    String(translated.text || "").replace(pattern, (_, index, gloss) => {
+      found[index] = gloss.replace(/\s+/g, " ").trim();
+      return "";
+    });
+    return clean.map((line, index) => found[String(index)] || "");
+  } catch (err) {
+    return clean.map(() => "");
+  }
+}
+
+async function pronounceClip(text, tl, audioUrl) {
+  const spoken = String(text || "").trim().slice(0, 160);
+  if (!spoken && !audioUrl) return { audio: "", mime: "audio/mpeg" };
+  try {
+    if (audioUrl) {
+      const clip = await audioToBase64(audioUrl);
+      if (clip.audio) return clip;
+    }
+  } catch (err) {
+    /* use synthesized speech below */
+  }
+  const lang = tl || "en-US";
+  const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(
+    lang
+  )}&q=${encodeURIComponent(spoken)}`;
+  return audioToBase64(url);
+}
+
+async function audioToBase64(url) {
+  const res = await fetch(url);
+  if (!res.ok) return { audio: "", mime: "audio/mpeg" };
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (!bytes.length || bytes.length > 250000) return { audio: "", mime: "audio/mpeg" };
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+  const mime = String(res.headers.get("content-type") || "audio/mpeg").split(";")[0];
+  return { audio: btoa(binary), mime: mime || "audio/mpeg" };
 }
 
 async function translateGoogle(text, from, to, detailed) {

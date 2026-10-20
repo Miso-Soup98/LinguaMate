@@ -1,4 +1,4 @@
-const fields = ["enabled", "learningLang", "nativeLang", "autoPause", "listenMode", "showNative", "highlightRare", "fontSize", "playbackRate"];
+const fields = ["enabled", "learningLang", "nativeLang", "autoPause", "listenMode", "showNative", "highlightRare", "fontSize", "playbackRate", "accent"];
 
 function send(type, payload = {}) {
   return new Promise((resolve) => {
