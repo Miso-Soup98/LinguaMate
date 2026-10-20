@@ -19,8 +19,12 @@
     playerReady: false,
     status: "loading",
     statusText: "",
-    loadGen: 0
+    loadGen: 0,
+    dictToken: 0
   };
+  let hoverWord = null;
+  let hoverTimer = 0;
+  let hideTimer = 0;
   const captionCache = new Map();
 
   const ui = {};
@@ -181,10 +185,6 @@
       loadCaptions(true);
     });
 
-    ui.subs.addEventListener("click", (ev) => {
-      const word = ev.target.closest(".lm-word");
-      if (word) openDict(word, false);
-    });
     ui.subs.addEventListener("contextmenu", (ev) => {
       const word = ev.target.closest(".lm-word");
       if (!word) return;
@@ -202,7 +202,7 @@
         <button data-tab="learn">学习</button>
       </div>
       <div class="lm-panel-body" id="lm-panel-body"></div>
-      <div class="lm-mini-help">A 上一句 · S 重播 · D 下一句 · 按住可预览 · 右键直接收藏</div>
+      <div class="lm-mini-help">悬停查词 · 右键收藏 · A 上一句 · S 重播 · D 下一句</div>
     `;
     ui.panel = panel;
     ui.panelBody = $("#lm-panel-body", panel);
@@ -211,13 +211,6 @@
       if (tab) {
         state.tab = tab.dataset.tab;
         renderPanel();
-        return;
-      }
-      const word = ev.target.closest(".lm-word");
-      if (word) {
-        ev.stopPropagation();
-        rememberCue(word);
-        openDict(word, false);
         return;
       }
       const cue = ev.target.closest("[data-seek]");
@@ -908,38 +901,98 @@
       renderCurrent();
     });
     ui.dict.querySelector(".lm-dict-save").addEventListener("click", () => saveWord(data.word, cue?.text, data));
-    const audioUrl = accent === "uk" ? data.audioUk : data.audioUs;
-    playPronunciation(data.word, from, accent, audioUrl);
+    if (hoverWord && hoverWord.isConnected) placeDict(hoverWord);
   }
 
   function placeDict(anchor) {
+    if (!anchor || !ui.dict) return;
     if (ui.dict.parentElement !== document.documentElement) {
       document.documentElement.appendChild(ui.dict);
     }
-    const rect = anchor.getBoundingClientRect();
-    const width = 420;
-    const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
-    let top = rect.bottom + 8;
-    if (top > window.innerHeight - 220) top = Math.max(8, rect.top - 220);
-    ui.dict.style.left = `${left}px`;
-    ui.dict.style.top = `${top}px`;
+    const margin = 8;
+    const gap = 6;
+    const word = anchor.getBoundingClientRect();
+    const card = ui.dict.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    const vh = window.innerHeight;
+    let left = word.left;
+    if (left + card.width > vw - margin) left = word.right - card.width;
+    if (left + card.width > vw - margin) left = vw - card.width - margin;
+    if (left < margin) left = margin;
+    let top = word.bottom + gap;
+    if (top + card.height > vh - margin) top = word.top - card.height - gap;
+    if (top < margin) top = Math.max(margin, vh - card.height - margin);
+    ui.dict.style.left = `${Math.round(left)}px`;
+    ui.dict.style.top = `${Math.round(top)}px`;
   }
 
-  async function openDict(wordEl, alreadySaved) {
+  function hideDict() {
+    clearTimeout(hoverTimer);
+    clearTimeout(hideTimer);
+    hoverWord = null;
+    state.dictToken += 1;
+    stopSpeech();
+    if (ui.dict) ui.dict.classList.add("lm-hidden");
+  }
+
+  function scheduleHide() {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (hoverWord && hoverWord.matches(":hover")) return;
+      if (ui.dict && ui.dict.matches(":hover")) return;
+      hideDict();
+    }, 160);
+  }
+
+  function scheduleShow(wordEl) {
+    clearTimeout(hideTimer);
+    if (hoverWord === wordEl && ui.dict && !ui.dict.classList.contains("lm-hidden")) return;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => showDict(wordEl), 60);
+  }
+
+  async function showDict(wordEl) {
+    if (!wordEl || !wordEl.isConnected) return;
+    hoverWord = wordEl;
+    rememberCue(wordEl);
     const word = wordEl.dataset.word;
     const from = wordEl.dataset.lang || state.settings.learningLang;
     const cue = cueForWord(wordEl);
+    const token = ++state.dictToken;
+    ui.dict.classList.remove("lm-hidden");
+    ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-empty">正在查询…</div>`;
+    placeDict(wordEl);
     const res = await send("LM_LOOKUP", {
       word,
       from,
       to: state.settings.nativeLang,
       context: cue?.text || ""
     });
+    if (token !== state.dictToken || hoverWord !== wordEl) return;
     const data = res.result || { word, translation: "", phonetic: "", senses: [], entries: [] };
-    ui.dict.classList.remove("lm-hidden");
-    placeDict(wordEl);
     renderDict(data, cue, from);
-    if (state.settings.autoPause) videoEl()?.pause();
+    placeDict(wordEl);
+  }
+
+  function onWordHover(ev) {
+    const word = ev.target.closest && ev.target.closest(".lm-word");
+    if (word && (ui.subs?.contains(word) || ui.panel?.contains(word))) {
+      scheduleShow(word);
+      return;
+    }
+    if (ui.dict && ui.dict.contains(ev.target)) clearTimeout(hideTimer);
+  }
+
+  function onWordLeave(ev) {
+    const target = ev.target;
+    const next = ev.relatedTarget;
+    const leftWord = target.closest && target.closest(".lm-word");
+    const leftCard = ui.dict && ui.dict.contains(target);
+    if (!leftWord && !leftCard) return;
+    if (next && ((leftWord && leftWord.contains(next)) || (ui.dict && ui.dict.contains(next)) || (next.closest && next.closest(".lm-word")))) {
+      return;
+    }
+    scheduleHide();
   }
 
   async function saveWord(word, context, lookup) {
@@ -1024,9 +1077,9 @@
   }
 
   function onDocClick(ev) {
-    if (ui.dict && !ui.dict.contains(ev.target) && !ev.target.closest(".lm-word")) {
-      ui.dict.classList.add("lm-hidden");
-    }
+    if (!ui.dict || ui.dict.classList.contains("lm-hidden")) return;
+    if (ui.dict.contains(ev.target) || (ev.target.closest && ev.target.closest(".lm-word"))) return;
+    hideDict();
   }
 
   async function refreshStore() {
@@ -1063,6 +1116,16 @@
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("keyup", onKeyUp, true);
   document.addEventListener("click", onDocClick, true);
+  document.addEventListener("mouseover", onWordHover);
+  document.addEventListener("mouseout", onWordLeave);
+  document.addEventListener("scroll", () => {
+    if (!hoverWord || !ui.dict || ui.dict.classList.contains("lm-hidden")) return;
+    if (!hoverWord.isConnected) {
+      hideDict();
+      return;
+    }
+    placeDict(hoverWord);
+  }, true);
   setInterval(() => {
     mountUi();
     onTick();

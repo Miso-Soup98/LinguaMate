@@ -128,7 +128,8 @@ html.lm-hide-yt-captions .caption-window {
 .lm-dict {
   position: fixed;
   z-index: 2147483000;
-  width: min(420px, calc(100vw - 24px));
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 16px));
   max-height: min(72vh, 560px);
   overflow: auto;
   background: var(--lm-bg);
