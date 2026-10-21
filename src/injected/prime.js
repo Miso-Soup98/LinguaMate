@@ -174,10 +174,17 @@
     rememberEnvelope(xhr.__lmUrl, body);
     xhr.addEventListener("load", () => {
       try {
-        if (xhr.responseType && xhr.responseType !== "text" && xhr.responseType !== "") return;
         const contentType = xhr.getResponseHeader("content-type") || "";
-        const interesting = isPlaybackUrl(xhr.__lmUrl) || /ttml|dfxp|vtt|timedtext|subtitle|caption/i.test(String(xhr.__lmUrl || "")) || /xml|ttml|vtt/i.test(contentType);
-        if (interesting) inspect(xhr.__lmUrl, xhr.responseText || "", contentType);
+        let text = "";
+        if (!xhr.responseType || xhr.responseType === "text") text = xhr.responseText || "";
+        else if (xhr.responseType === "json") text = JSON.stringify(xhr.response || "");
+        else if (xhr.responseType === "arraybuffer" && xhr.response) text = new TextDecoder().decode(xhr.response);
+        else if (xhr.responseType === "blob" && xhr.response) {
+          xhr.response.text().then((value) => inspect(xhr.__lmUrl, value, contentType)).catch(() => {});
+          return;
+        } else return;
+        const interesting = isPlaybackUrl(xhr.__lmUrl) || /ttml|dfxp|vtt|timedtext|subtitle|caption/i.test(`${xhr.__lmUrl} ${contentType} ${text.slice(0, 200)}`);
+        if (interesting) inspect(xhr.__lmUrl, text, contentType);
       } catch (err) {
         /* ignore binary payloads */
       }

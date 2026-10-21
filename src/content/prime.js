@@ -8,7 +8,9 @@
     native: [],
     index: -1,
     vocab: [],
-    token: 0
+    token: 0,
+    fullTrack: false,
+    statusText: "正在等待播放器提供字幕…"
   };
 
   const ui = {};
@@ -80,26 +82,32 @@
     handle.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0) return;
       if (ev.target.closest(".lm-word, .lm-panel-body, .lm-mini-help")) return;
+      ev.preventDefault();
       const rect = target.getBoundingClientRect();
       const startX = ev.clientX;
       const startY = ev.clientY;
       const originX = rect.left;
       const originY = rect.top;
       let moved = false;
+      target.style.width = `${rect.width}px`;
+      handle.setPointerCapture(ev.pointerId);
       const move = (event) => {
         const dx = event.clientX - startX;
         const dy = event.clientY - startY;
-        if (Math.abs(dx) + Math.abs(dy) < 4) return;
+        if (Math.abs(dx) + Math.abs(dy) < 5) return;
         moved = true;
         target.classList.add("lm-dragging");
-        const left = Math.min(window.innerWidth - 48, Math.max(0, originX + dx));
-        const top = Math.min(window.innerHeight - 40, Math.max(0, originY + dy));
+        const maxLeft = Math.max(0, window.innerWidth - rect.width);
+        const maxTop = Math.max(0, window.innerHeight - 48);
+        const left = Math.min(maxLeft, Math.max(0, originX + dx));
+        const top = Math.min(maxTop, Math.max(0, originY + dy));
         target.style.left = `${Math.round(left)}px`;
         target.style.top = `${Math.round(top)}px`;
         target.style.right = "auto";
         target.style.bottom = "auto";
       };
       const up = () => {
+        if (handle.hasPointerCapture(ev.pointerId)) handle.releasePointerCapture(ev.pointerId);
         handle.removeEventListener("pointermove", move);
         handle.removeEventListener("pointerup", up);
         target.classList.remove("lm-dragging");
@@ -152,12 +160,15 @@
   function mount() {
     if (!videoEl()) return;
     ensureUi();
+    const toolbar = ui.root.querySelector(".lm-toolbar");
     if (ui.root.parentElement !== document.documentElement) document.documentElement.appendChild(ui.root);
+    if (toolbar.parentElement !== document.documentElement) document.documentElement.appendChild(toolbar);
     if (ui.panel.parentElement !== document.documentElement) document.documentElement.appendChild(ui.panel);
     document.documentElement.classList.add("lm-prime-captions");
     ui.learningLine.style.fontSize = `${state.settings.fontSize || 22}px`;
     ui.nativeLine.style.fontSize = `${Math.max(14, (state.settings.fontSize || 22) - 4)}px`;
     placeOverlay();
+    if (!state.cues.length && ui.panelBody && !ui.panelBody.childElementCount) renderPanel();
   }
 
   function escapeHtml(value) {
@@ -272,7 +283,7 @@
 
   function renderPanel() {
     if (!state.cues.length) {
-      ui.panelBody.innerHTML = `<div class="lm-empty">还没有读到字幕。请在 Amazon 播放器里打开你要学习的字幕语言，语伴会自动接上，不用刷新页面。</div>`;
+      ui.panelBody.innerHTML = `<div class="lm-empty">${escapeHtml(state.statusText)}</div>`;
       return;
     }
     const fragment = document.createDocumentFragment();
@@ -332,14 +343,70 @@
     }
   }
 
+  function cuesFromTextTrack(track) {
+    if (!track || !track.cues || !track.cues.length) return [];
+    return Array.from(track.cues).map((cue) => ({
+      start: cue.startTime * 1000,
+      end: cue.endTime * 1000,
+      text: String(cue.text || "").replace(/\n+/g, " ").trim()
+    })).filter((cue) => cue.text);
+  }
+
+  function syncTextTracks() {
+    const video = videoEl();
+    if (!video || !video.textTracks || state.fullTrack) return;
+    let best = [];
+    Array.from(video.textTracks).forEach((track) => {
+      try {
+        if (track.mode === "disabled") track.mode = "hidden";
+      } catch (err) {
+        /* some tracks reject mode changes */
+      }
+      const cues = cuesFromTextTrack(track);
+      if (cues.length > best.length) best = cues;
+    });
+    if (best.length < 2) return;
+    state.fullTrack = true;
+    state.token += 1;
+    state.cues = best;
+    state.native = [];
+    renderPanel();
+    renderCurrent();
+    translateCues(best, state.token);
+  }
+
+  function scrapeLiveCaption() {
+    if (state.fullTrack) return;
+    const nodes = document.querySelectorAll("[class*='captions-text'], [class*='CaptionsText']");
+    const parts = [];
+    nodes.forEach((node) => {
+      if (node.closest("#lm-root, .lm-prime-panel, .lm-dict, .lm-toolbar")) return;
+      const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+      if (text) parts.push(text);
+    });
+    const text = parts.join(" ");
+    if (!text || text === state.lastLive) return;
+    state.lastLive = text;
+    const now = (videoEl()?.currentTime || 0) * 1000;
+    const prev = state.cues[state.cues.length - 1];
+    if (prev && now - prev.start < 8000) prev.end = now;
+    state.cues.push({ start: now, end: now + 4000, text });
+    state.statusText = "已从画面字幕开始记录。完整字幕会在拿到字幕文件后补上。";
+    renderPanel();
+    renderCurrent();
+  }
+
   function applyTrack(text) {
     let parsed;
     try {
       parsed = parseTrack(text);
     } catch (err) {
+      state.statusText = "字幕文件已下载，但格式无法解析。";
+      renderPanel();
       return;
     }
     if (!parsed.cues.length) return;
+    state.fullTrack = true;
     state.token += 1;
     state.cues = parsed.cues;
     state.native = [];
@@ -470,9 +537,11 @@
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
     const msg = event.data;
-    if (!msg || msg.source !== "linguamate-prime" || msg.type !== "LM_TRACK") return;
-    mount();
-    applyTrack(msg.text);
+    if (!msg || msg.source !== "linguamate-prime") return;
+    if (msg.type === "LM_TRACK") {
+      mount();
+      applyTrack(msg.text);
+    }
   });
 
   async function boot() {
@@ -492,6 +561,8 @@
     window.addEventListener("resize", placeOverlay);
     setInterval(() => {
       placeOverlay();
+      syncTextTracks();
+      scrapeLiveCaption();
       if (state.cues.length) renderCurrent();
     }, 250);
   }
