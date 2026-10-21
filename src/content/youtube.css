@@ -316,6 +316,17 @@ html.lm-hide-yt-captions .caption-window {
   margin-bottom: 12px;
 }
 
+.lm-panel.lm-in-column {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  max-height: 70vh;
+  z-index: auto !important;
+  margin: 0 0 12px;
+}
+
 .lm-panel.lm-docked {
   position: fixed;
   top: 72px;

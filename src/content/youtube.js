@@ -293,12 +293,37 @@
     });
   }
 
-  function columnVisible(secondary) {
-    if (!secondary || secondary.hidden || document.fullscreenElement) return false;
+  function recommendationColumn() {
+    if (document.fullscreenElement) return null;
+    const flexy = document.querySelector("ytd-watch-flexy:not([hidden])");
+    const secondary = flexy?.querySelector("#secondary") || null;
+    if (!secondary || !secondary.isConnected) return null;
     const style = getComputedStyle(secondary);
-    if (style.display === "none" || style.visibility === "hidden") return false;
+    if (style.display === "none" || style.visibility === "hidden") return null;
+    const box = secondary.getBoundingClientRect();
+    if (box.width < 180 || box.height < 80) return null;
+    return secondary;
+  }
+
+  function embedInColumn(secondary) {
+    ui.panel.classList.remove("lm-docked");
+    ui.panel.classList.add("lm-in-column");
+    ui.panel.style.top = "";
+    ui.panel.style.right = "";
+    ui.panel.style.left = "";
+    ui.panel.style.width = "";
+    if (!secondary.contains(ui.panel)) secondary.prepend(ui.panel);
+  }
+
+  function coversRecommendations() {
+    const secondary = document.getElementById("secondary");
+    if (!secondary || !ui.panel.classList.contains("lm-docked")) return false;
     const column = secondary.getBoundingClientRect();
-    return column.width > 160 && column.height > 40;
+    const panel = ui.panel.getBoundingClientRect();
+    if (column.width < 40 || column.height < 40) return false;
+    const overlapX = Math.min(panel.right, column.right) - Math.max(panel.left, column.left);
+    const overlapY = Math.min(panel.bottom, column.bottom) - Math.max(panel.top, column.top);
+    return overlapX > 24 && overlapY > 24;
   }
 
   function placePanel() {
@@ -308,19 +333,15 @@
       ui.panel.remove();
       return;
     }
-    const secondary = document.getElementById("secondary");
-    if (columnVisible(secondary)) {
-      ui.panel.classList.remove("lm-docked");
-      ui.panel.style.top = "";
-      ui.panel.style.right = "";
-      ui.panel.style.left = "";
-      ui.panel.style.width = "";
-      if (!secondary.contains(ui.panel)) secondary.prepend(ui.panel);
+    const secondary = recommendationColumn() || (coversRecommendations() ? document.querySelector("ytd-watch-flexy:not([hidden]) #secondary") : null);
+    if (secondary) {
+      embedInColumn(secondary);
       return;
     }
+    ui.panel.classList.remove("lm-in-column", "lm-hidden");
     ui.panel.classList.add("lm-docked");
     const parent = document.fullscreenElement || document.documentElement;
-    if (ui.panel.parentElement !== parent) parent.appendChild(ui.panel);
+    if (!ui.panel.isConnected || ui.panel.parentElement !== parent) parent.appendChild(ui.panel);
   }
 
   function syncToolbar() {
@@ -1244,6 +1265,8 @@
     if (area === "local") refreshStore().then(() => renderPanel());
   });
 
+  document.addEventListener("yt-navigate-finish", () => mountUi());
+  document.addEventListener("yt-page-data-updated", () => mountUi());
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("keyup", onKeyUp, true);
   document.addEventListener("click", onDocClick, true);
