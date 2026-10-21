@@ -4,10 +4,6 @@
 
 A Chrome extension for learning languages on YouTube with bilingual subtitles, a hover dictionary, and a vocabulary notebook.
 
-本项目参照 Language Reactor 的公开功能思路独立实现，使用自己的界面和代码。它与 Language Reactor / Language Learning with Netflix 没有从属关系，不复制其源码、商标或界面。
-
-This project independently implements ideas that Language Reactor describes publicly, with its own interface and code. It is not affiliated with Language Reactor or Language Learning with Netflix, and it does not copy their source, trademarks, or interface.
-
 ## 中文
 
 ### 能做什么
@@ -23,10 +19,9 @@ This project independently implements ideas that Language Reactor describes publ
 - 生词本、间隔重复闪卡，可导出 CSV / Anki
 - 任意网页：右键「用语伴查阅」或「用语伴阅读」
 
-### 明确不做的部分
+### 范围
 
-- 不支持 Netflix。其字幕受版权和 DRM 保护，这里不会拦截或复制。
-- 不做 Language Reactor 的账号同步、内容目录、Lexa / Aria，以及他们的付费语音识别。
+- 用于 YouTube 和普通网页。Netflix 字幕受版权和 DRM 保护，本插件不会拦截或复制。
 
 ### 安装
 
@@ -69,10 +64,9 @@ This project independently implements ideas that Language Reactor describes publ
 - Vocabulary notebook, spaced-repetition flashcards, and CSV / Anki export
 - On any page, right-click to look up a selection or read it in LinguaMate
 
-### What it does not do
+### Scope
 
-- Netflix is not supported. Those captions are protected by copyright and DRM, and this extension does not intercept or copy them.
-- It does not include Language Reactor account sync, their content catalog, Lexa / Aria, or their paid speech recognition.
+- It works on YouTube and ordinary web pages. Netflix captions are protected by copyright and DRM, so this extension does not intercept or copy them.
 
 ### Install
 
