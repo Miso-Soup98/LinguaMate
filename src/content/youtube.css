@@ -17,6 +17,12 @@
 
 .lm-hidden { display: none !important; }
 
+#lm-dict-bridge {
+  position: fixed;
+  z-index: 2147482990;
+  background: transparent;
+}
+
 html.lm-hide-yt-captions .ytp-caption-window-container,
 html.lm-hide-yt-captions .caption-window {
   display: none !important;
@@ -209,11 +215,10 @@ html.lm-hide-yt-captions .caption-window {
 .lm-dict-context { margin-top: 8px; font-size: 12px; color: #c9d6e0; }
 
 .lm-panel {
-  position: sticky;
-  top: 72px;
-  z-index: 10;
+  position: relative;
+  z-index: auto;
   width: 100%;
-  max-height: calc(100vh - 96px);
+  max-height: 70vh;
   overflow: hidden;
   display: flex;
   flex-direction: column;

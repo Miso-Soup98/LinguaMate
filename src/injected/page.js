@@ -1,5 +1,5 @@
 (function () {
-  const VERSION = 4;
+  const VERSION = 5;
   if (window.__linguaMateCleanup) window.__linguaMateCleanup();
 
   const cache = new Map();
@@ -87,6 +87,12 @@
     if (index >= 0) list[index] = entry;
     else list.push(entry);
     bodies.set(videoId, list.slice(-8));
+    window.postMessage({
+      source: "linguamate-page",
+      type: "LM_CAPTIONS",
+      videoId,
+      lang: entry.lang
+    }, "*");
   }
 
   if (originalFetch) {

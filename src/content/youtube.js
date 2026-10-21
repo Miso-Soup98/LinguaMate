@@ -25,6 +25,7 @@
   let hoverWord = null;
   let hoverTimer = 0;
   let hideTimer = 0;
+  let captionRetry = 0;
   const captionCache = new Map();
 
   const ui = {};
@@ -165,6 +166,9 @@
     ui.learningLine = $("#lm-learning-line", root);
     ui.nativeLine = $("#lm-native-line", root);
     ui.dict = $("#lm-dict", root);
+    ui.bridge = document.createElement("div");
+    ui.bridge.id = "lm-dict-bridge";
+    ui.bridge.className = "lm-hidden";
     ui.learningSelect = $("#lm-learning", root);
     ui.nativeSelect = $("#lm-native", root);
 
@@ -247,6 +251,23 @@
     placePanel();
     syncToolbar();
     applyCaptionVisibility();
+    watchCaptionButton();
+  }
+
+  function retryCaptions() {
+    if (state.cues.length) return;
+    clearTimeout(captionRetry);
+    captionRetry = setTimeout(() => loadCaptions(true), 350);
+  }
+
+  function watchCaptionButton() {
+    const button = document.querySelector(".ytp-subtitles-button");
+    if (!button || button.dataset.lmWatch === "1") return;
+    button.dataset.lmWatch = "1";
+    new MutationObserver(() => retryCaptions()).observe(button, {
+      attributes: true,
+      attributeFilter: ["aria-pressed"]
+    });
   }
 
   function placePanel() {
@@ -521,7 +542,7 @@
     if (gen !== state.loadGen) return;
     if (!state.cues.length) {
       state.status = "error";
-      state.statusText = "已经找到字幕轨道，但 YouTube 没有返回字幕正文。请先点播放器的 CC 打开字幕，再刷新页面。";
+      state.statusText = "已经找到字幕轨道，但还没有字幕正文。打开或关闭一次播放器的 CC，语伴会自动再读一次。";
       renderPanel();
       renderCurrent();
       return;
@@ -616,7 +637,8 @@
       return;
     }
     if (!state.cues.length) {
-      ui.panelBody.innerHTML = `<div class="lm-empty">${escapeHtml(state.statusText || "当前视频没有可用字幕。")}</div>`;
+      ui.panelBody.innerHTML = `<div class="lm-empty">${escapeHtml(state.statusText || "当前视频没有可用字幕。")}</div><button class="lm-chip" id="lm-retry">重新读取字幕</button>`;
+      ui.panelBody.querySelector("#lm-retry").addEventListener("click", () => loadCaptions(true));
       return;
     }
     const scroll = ui.panelBody.scrollTop;
@@ -924,6 +946,45 @@
     if (top < margin) top = Math.max(margin, vh - card.height - margin);
     ui.dict.style.left = `${Math.round(left)}px`;
     ui.dict.style.top = `${Math.round(top)}px`;
+    placeBridge(anchor);
+  }
+
+  function placeBridge(anchor) {
+    if (!ui.bridge || !ui.dict || !anchor) return;
+    if (ui.bridge.parentElement !== document.documentElement) {
+      document.documentElement.appendChild(ui.bridge);
+    }
+    const word = anchor.getBoundingClientRect();
+    const card = ui.dict.getBoundingClientRect();
+    const pad = 16;
+    const left = Math.min(word.left, card.left) - pad;
+    const top = Math.min(word.top, card.top) - pad;
+    const right = Math.max(word.right, card.right) + pad;
+    const bottom = Math.max(word.bottom, card.bottom) + pad;
+    ui.bridge.style.left = `${Math.round(left)}px`;
+    ui.bridge.style.top = `${Math.round(top)}px`;
+    ui.bridge.style.width = `${Math.round(Math.max(0, right - left))}px`;
+    ui.bridge.style.height = `${Math.round(Math.max(0, bottom - top))}px`;
+    ui.bridge.classList.remove("lm-hidden");
+  }
+
+  function dictOpen() {
+    return !!(ui.dict && !ui.dict.classList.contains("lm-hidden") && hoverWord);
+  }
+
+  function inDictZone(node) {
+    if (!node) return false;
+    if (ui.dict && (node === ui.dict || ui.dict.contains(node))) return true;
+    if (ui.bridge && (node === ui.bridge || ui.bridge.contains(node))) return true;
+    if (hoverWord && (node === hoverWord || hoverWord.contains(node))) return true;
+    return false;
+  }
+
+  function pointerInDictZone() {
+    if (hoverWord && hoverWord.matches(":hover")) return true;
+    if (ui.bridge && ui.bridge.matches(":hover")) return true;
+    if (ui.dict && ui.dict.matches(":hover")) return true;
+    return false;
   }
 
   function hideDict() {
@@ -933,22 +994,32 @@
     state.dictToken += 1;
     stopSpeech();
     if (ui.dict) ui.dict.classList.add("lm-hidden");
+    if (ui.bridge) ui.bridge.classList.add("lm-hidden");
   }
 
   function scheduleHide() {
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (hoverWord && hoverWord.matches(":hover")) return;
-      if (ui.dict && ui.dict.matches(":hover")) return;
+      if (pointerInDictZone()) return;
+      const hovered = document.querySelector(".lm-word:hover");
+      if (hovered && (ui.subs?.contains(hovered) || ui.panel?.contains(hovered))) return;
       hideDict();
-    }, 160);
+    }, 180);
   }
 
   function scheduleShow(wordEl) {
-    clearTimeout(hideTimer);
-    if (hoverWord === wordEl && ui.dict && !ui.dict.classList.contains("lm-hidden")) return;
+    if (!wordEl) return;
+    if (hoverWord === wordEl && dictOpen()) {
+      clearTimeout(hideTimer);
+      return;
+    }
     clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => showDict(wordEl), 60);
+    const delay = dictOpen() ? 480 : 40;
+    hoverTimer = setTimeout(() => {
+      if (!wordEl.isConnected || !wordEl.matches(":hover")) return;
+      clearTimeout(hideTimer);
+      showDict(wordEl);
+    }, delay);
   }
 
   async function showDict(wordEl) {
@@ -975,12 +1046,15 @@
   }
 
   function onWordHover(ev) {
+    if (inDictZone(ev.target) && ev.target !== hoverWord && !(hoverWord && hoverWord.contains(ev.target))) {
+      clearTimeout(hideTimer);
+      if (ui.dict && ui.dict.contains(ev.target)) return;
+      if (ui.bridge && ui.bridge.contains(ev.target)) return;
+    }
     const word = ev.target.closest && ev.target.closest(".lm-word");
     if (word && (ui.subs?.contains(word) || ui.panel?.contains(word))) {
       scheduleShow(word);
-      return;
     }
-    if (ui.dict && ui.dict.contains(ev.target)) clearTimeout(hideTimer);
   }
 
   function onWordLeave(ev) {
@@ -988,10 +1062,9 @@
     const next = ev.relatedTarget;
     const leftWord = target.closest && target.closest(".lm-word");
     const leftCard = ui.dict && ui.dict.contains(target);
-    if (!leftWord && !leftCard) return;
-    if (next && ((leftWord && leftWord.contains(next)) || (ui.dict && ui.dict.contains(next)) || (next.closest && next.closest(".lm-word")))) {
-      return;
-    }
+    const leftBridge = ui.bridge && (target === ui.bridge || ui.bridge.contains(target));
+    if (!leftWord && !leftCard && !leftBridge) return;
+    if (inDictZone(next)) return;
     scheduleHide();
   }
 
@@ -1106,6 +1179,7 @@
       mountUi();
       loadCaptions(true);
     }
+    if (msg.type === "LM_CAPTIONS") retryCaptions();
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
