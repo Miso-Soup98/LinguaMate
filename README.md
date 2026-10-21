@@ -25,13 +25,24 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 
 ### 安装
 
-1. 打开 Chrome，进入 `chrome://extensions`
-2. 打开右上角「开发者模式」
-3. 点击「加载已解压的扩展程序」
-4. 选择本文件夹
-5. 打开任意带字幕的 YouTube 视频
+不需要安装 Git，也不需要注册 GitHub 账号。用浏览器把项目下载成一个压缩包即可。
 
-首次使用时，在插件弹窗里把「学习语言」设为视频语言，把「母语 / 译文」设成你的母语。更新插件后，在扩展管理页点一次刷新，再刷新正在观看的视频页。
+1. 用 Chrome 打开这个页面：<https://github.com/Miso-Soup98/LinguaMate>
+2. 点绿色的 **Code** 按钮。
+3. 在弹出的菜单最下方点 **Download ZIP**。浏览器会下载一个名叫 `LinguaMate-main.zip` 的文件，一般在「下载」文件夹里。
+4. 把这个压缩包解压。
+   - Windows：右键压缩包，选「全部解压缩」，记住解压出来的文件夹。
+   - Mac：双击压缩包，会得到一个文件夹。
+5. 打开解压出来的文件夹，确认里面能直接看到 `manifest.json`。不要选再套一层的外层空文件夹，也不要选还没解压的 `.zip` 文件。
+6. 在 Chrome 地址栏输入 `chrome://extensions` 并回车。
+7. 打开页面右上角的 **开发者模式**。
+8. 点左上角 **加载已解压的扩展程序**。
+9. 在弹窗里选中第 5 步那个包含 `manifest.json` 的文件夹，然后点「选择文件夹」。
+10. 安装成功后，语伴会出现在扩展列表里。点 Chrome 工具栏的拼图图标，把语伴固定到工具栏，以后更好找。
+
+然后打开一个带字幕的 YouTube 视频。点语伴图标，把「学习语言」设成视频的语言，把「母语 / 译文」设成你的母语。
+
+以后想更新到新版本：再按上面的步骤下载一次 ZIP 并解压。回到 `chrome://extensions`，在语伴卡片上点刷新按钮。不要重复点「加载已解压的扩展程序」，除非你想再装一份。刷新扩展后，把正在看的视频页也刷新一次。
 
 ### 快捷键
 
@@ -70,13 +81,24 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 
 ### Install
 
-1. Open `chrome://extensions` in Chrome
-2. Turn on Developer mode
-3. Click Load unpacked
-4. Select this folder
-5. Open a YouTube video that has captions
+You do not need Git, and you do not need a GitHub account. Download the project as a zip file in the browser.
 
-On first use, set Learning language to the video's language and Native language to yours in the extension popup. After an update, reload the extension, then reload the video tab once.
+1. Open this page in Chrome: <https://github.com/Miso-Soup98/LinguaMate>
+2. Click the green **Code** button.
+3. Click **Download ZIP** at the bottom of the menu. Chrome saves a file named `LinguaMate-main.zip`, usually in your Downloads folder.
+4. Unzip it.
+   - Windows: right-click the zip file, choose Extract All, and remember the folder it creates.
+   - Mac: double-click the zip file. Finder creates a folder next to it.
+5. Open that folder and check that `manifest.json` is directly inside it. Do not select the zip file itself, and do not select an extra outer folder that only contains another folder.
+6. Click the address bar, type `chrome://extensions`, and press Enter.
+7. Turn on **Developer mode** in the top-right corner of that page.
+8. Click **Load unpacked** in the top-left.
+9. Select the folder from step 5, the one that contains `manifest.json`, then confirm.
+10. LinguaMate appears in the extensions list. Click the puzzle-piece icon on the Chrome toolbar and pin LinguaMate so it is easy to open.
+
+Open a YouTube video that has captions. Click the LinguaMate icon, set Learning language to the video's language, and set Native language to yours.
+
+To update later, download the zip again and unzip it. On `chrome://extensions`, click the reload button on the LinguaMate card. Do not click Load unpacked again unless you want a second copy. After reloading the extension, reload the video tab once.
 
 ### Shortcuts
 
