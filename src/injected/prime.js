@@ -1,7 +1,9 @@
-(function () {
+function linguaMateInstallPrimeHook() {
   if (window.__linguaMatePrime) return;
   window.__linguaMatePrime = true;
 
+  const extensionFallback = window.__lmExtensionFallback === true;
+  window.__lmExtensionFallback = false;
   const originalFetch = window.fetch ? window.fetch.bind(window) : null;
   const originalOpen = XMLHttpRequest.prototype.open;
   const originalSend = XMLHttpRequest.prototype.send;
@@ -149,7 +151,7 @@
     }
   }
 
-  if (originalFetch) {
+  if (originalFetch && !extensionFallback) {
     window.fetch = function (input, init) {
       const url = typeof input === "string" ? input : input && input.url;
       rememberEnvelope(url, init && init.body);
@@ -199,4 +201,35 @@
     if (msg.lang) preferredLang = String(msg.lang);
     pullTracks();
   });
+}
+
+(function () {
+  const nonce = Math.random().toString(36).slice(2);
+  window.__lmPrimeNonce = "";
+  const source = `window.__lmPrimeNonce=${JSON.stringify(nonce)};(${linguaMateInstallPrimeHook.toString()})();`;
+  const script = document.createElement("script");
+  try {
+    if (window.trustedTypes && window.trustedTypes.createPolicy) {
+      try {
+        const policy = window.trustedTypes.createPolicy(`lmp${nonce}`, {
+          createScript(text) {
+            return text;
+          }
+        });
+        script.textContent = policy.createScript(source);
+      } catch (err) {
+        script.textContent = source;
+      }
+    } else {
+      script.textContent = source;
+    }
+    (document.documentElement || document.head).appendChild(script);
+    script.remove();
+  } catch (err) {
+    /* the page blocked the inline script */
+  }
+  if (window.__lmPrimeNonce !== nonce) {
+    window.__lmExtensionFallback = true;
+    linguaMateInstallPrimeHook();
+  }
 })();

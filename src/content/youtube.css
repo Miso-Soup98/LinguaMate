@@ -316,17 +316,14 @@ html.lm-hide-yt-captions .caption-window {
   margin-bottom: 12px;
 }
 
-#secondary.lm-has-panel {
-  display: flex !important;
-  flex-direction: column;
-}
-
-#lm-root.lm-floating-panel {
+.lm-panel.lm-docked {
   position: fixed;
-  top: 88px;
+  top: 72px;
   right: 16px;
-  width: 360px;
-  z-index: 2147480000;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  z-index: 2147482000;
+  margin: 0;
 }
 
 .lm-mini-help {

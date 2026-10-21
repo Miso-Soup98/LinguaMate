@@ -24,6 +24,9 @@
             <option value="learning">学习中</option>
             <option value="known">已掌握</option>
           </select>
+          <select id="langFilter">
+            <option value="all">全部语言</option>
+          </select>
           <button id="exportCsv">导出 CSV</button>
           <button id="exportAnki">导出 Anki</button>
         </header>
@@ -31,6 +34,11 @@
       </section>
 
       <section id="view-cards" hidden>
+        <header class="toolbar">
+          <select id="cardLang">
+            <option value="all">全部语言</option>
+          </select>
+        </header>
         <div id="cardBox" class="card-box">
           <p class="muted">今天没有到期卡片。去 YouTube 收藏几个词再回来。</p>
         </div>

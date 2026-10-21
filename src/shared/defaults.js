@@ -4,6 +4,7 @@ const LM_DEFAULTS = {
   nativeLang: "zh-CN",
   showLearning: true,
   showNative: true,
+  nativeInteractive: false,
   listenMode: false,
   autoPause: false,
   highlightRare: true,

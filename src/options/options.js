@@ -52,21 +52,47 @@ function review(item, grade) {
   };
 }
 
+function langLabel(code) {
+  const found = LM_LANGUAGES.find((item) => item.code === code);
+  return found ? found.native : code || "其他";
+}
+
+function fillLangSelect(select, selected) {
+  const langs = Array.from(new Set(vocab.map((item) => item.lang || "und")));
+  const current = selected || select.value || "all";
+  select.innerHTML = `<option value="all">全部语言</option>${langs
+    .map((code) => `<option value="${code}">${langLabel(code)}</option>`)
+    .join("")}`;
+  select.value = langs.includes(current) || current === "all" ? current : "all";
+}
+
 function renderVocab() {
+  const langSelect = document.getElementById("langFilter");
+  fillLangSelect(langSelect);
   const q = ui.search.value.trim().toLowerCase();
   const status = ui.statusFilter.value;
+  const lang = langSelect.value;
   const rows = vocab.filter((item) => {
     const hit = [item.word, item.translation, item.context, item.videoTitle].join(" ").toLowerCase();
     const statusOk = status === "all" || item.status === status;
-    return statusOk && (!q || hit.includes(q));
+    const langOk = lang === "all" || (item.lang || "und") === lang;
+    return statusOk && langOk && (!q || hit.includes(q));
   });
   if (!rows.length) {
-    ui.vocabList.innerHTML = `<p class="muted">还没有匹配的生词。去 YouTube 点词收藏即可。</p>`;
+    ui.vocabList.innerHTML = `<p class="muted">还没有匹配的生词。去视频里点词收藏即可。</p>`;
     return;
   }
-  ui.vocabList.innerHTML = rows
-    .map(
-      (item) => `<article class="item" data-id="${item.id}">
+  const groups = new Map();
+  rows.forEach((item) => {
+    const key = item.lang || "und";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+  ui.vocabList.innerHTML = Array.from(groups.entries())
+    .map(([code, items]) => {
+      const cards = items
+        .map(
+          (item) => `<article class="item" data-id="${item.id}">
         <div>
           <strong>${item.word}</strong>
           <div>${item.translation || ""}</div>
@@ -78,13 +104,20 @@ function renderVocab() {
           <button data-act="delete">删除</button>
         </menu>
       </article>`
-    )
+        )
+        .join("");
+      return `<h2>${langLabel(code)}</h2>${cards}`;
+    })
     .join("");
 }
 
 function dueCards() {
   const now = Date.now();
-  return vocab.filter((item) => item.status !== "known" && (item.due || 0) <= now);
+  const lang = document.getElementById("cardLang")?.value || "all";
+  return vocab.filter((item) => {
+    const langOk = lang === "all" || (item.lang || "und") === lang;
+    return langOk && item.status !== "known" && (item.due || 0) <= now;
+  });
 }
 
 function renderCard() {
@@ -120,6 +153,7 @@ async function load() {
     return;
   }
   vocab = vocabRes.vocab || [];
+  fillLangSelect(document.getElementById("cardLang"));
   renderVocab();
   renderCard();
   const settings = settingsRes.settings || {};
@@ -149,6 +183,8 @@ document.querySelector("nav").addEventListener("click", (ev) => {
 
 ui.search.addEventListener("input", renderVocab);
 ui.statusFilter.addEventListener("change", renderVocab);
+document.getElementById("langFilter").addEventListener("change", renderVocab);
+document.getElementById("cardLang").addEventListener("change", renderCard);
 
 document.getElementById("exportCsv").addEventListener("click", () => {
   const header = "word,translation,context,video,status";

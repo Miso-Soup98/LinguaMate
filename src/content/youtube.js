@@ -36,9 +36,22 @@
 
   function send(type, payload = {}) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage(Object.assign({ type }, payload), (res) => {
-        resolve(res || { ok: false, error: "no_response" });
-      });
+      try {
+        if (!chrome.runtime || !chrome.runtime.id) {
+          resolve({ ok: false, error: "invalidated" });
+          return;
+        }
+        chrome.runtime.sendMessage(Object.assign({ type }, payload), (res) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            resolve({ ok: false, error: err.message });
+            return;
+          }
+          resolve(res || { ok: false, error: "no_response" });
+        });
+      } catch (err) {
+        resolve({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
     });
   }
 
@@ -117,8 +130,12 @@
     }
   }
 
-  function renderWords(target, text, lang) {
+  function renderWords(target, text, lang, interactive = true) {
     target.innerHTML = "";
+    if (!interactive) {
+      target.textContent = text || "";
+      return;
+    }
     const saved = new Set(state.vocab.map((item) => item.word.toLowerCase()));
     for (const token of tokenize(text, lang)) {
       if (!token.word) {
@@ -152,6 +169,7 @@
         <button data-act="autoPause" title="逐句暂停">逐句</button>
         <button data-act="listen" title="听写模式">听写</button>
         <button data-act="native" title="母语字幕">译文</button>
+        <button data-act="nativeWords" title="译文里的词能否查词">译词</button>
         <button data-act="panel" title="侧栏">侧栏</button>
       </div>
       <div class="lm-subs" id="lm-subs">
@@ -242,6 +260,11 @@
   }
 
   function mountUi() {
+    if (!currentVideoId()) {
+      ui.panel?.remove();
+      ui.root?.remove();
+      return;
+    }
     ensureUi();
     const box = playerBox();
     if (box && ui.root.parentElement !== box) {
@@ -270,19 +293,34 @@
     });
   }
 
+  function columnVisible(secondary) {
+    if (!secondary || secondary.hidden || document.fullscreenElement) return false;
+    const style = getComputedStyle(secondary);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    const column = secondary.getBoundingClientRect();
+    return column.width > 160 && column.height > 40;
+  }
+
   function placePanel() {
     if (!ui.panel) return;
-    const secondary = document.getElementById("secondary");
-    if (secondary && state.settings.panelOpen) {
-      secondary.classList.add("lm-has-panel");
-      if (!secondary.contains(ui.panel)) secondary.prepend(ui.panel);
-      ui.root.classList.remove("lm-floating-panel");
-    } else if (state.settings.panelOpen) {
-      ui.root.classList.add("lm-floating-panel");
-      if (!ui.root.contains(ui.panel)) ui.root.appendChild(ui.panel);
-    } else {
+    ui.root?.classList.remove("lm-floating-panel");
+    if (!state.settings.panelOpen || !currentVideoId()) {
       ui.panel.remove();
+      return;
     }
+    const secondary = document.getElementById("secondary");
+    if (columnVisible(secondary)) {
+      ui.panel.classList.remove("lm-docked");
+      ui.panel.style.top = "";
+      ui.panel.style.right = "";
+      ui.panel.style.left = "";
+      ui.panel.style.width = "";
+      if (!secondary.contains(ui.panel)) secondary.prepend(ui.panel);
+      return;
+    }
+    ui.panel.classList.add("lm-docked");
+    const parent = document.fullscreenElement || document.documentElement;
+    if (ui.panel.parentElement !== parent) parent.appendChild(ui.panel);
   }
 
   function syncToolbar() {
@@ -292,6 +330,7 @@
       autoPause: state.settings.autoPause,
       listen: state.settings.listenMode,
       native: state.settings.showNative,
+      nativeWords: state.settings.nativeInteractive,
       panel: state.settings.panelOpen
     };
     ui.toolbar.querySelectorAll("button[data-act]").forEach((btn) => {
@@ -321,6 +360,7 @@
     placePanel();
     applyCaptionVisibility();
     renderCurrent();
+    if (state.tab === "subs") renderTranscript();
     await send("LM_SET_SETTINGS", { settings: patch });
   }
 
@@ -332,6 +372,7 @@
     if (act === "autoPause") await persist({ autoPause: !state.settings.autoPause });
     if (act === "listen") await persist({ listenMode: !state.settings.listenMode });
     if (act === "native") await persist({ showNative: !state.settings.showNative });
+    if (act === "nativeWords") await persist({ nativeInteractive: !state.settings.nativeInteractive });
     if (act === "panel") await persist({ panelOpen: !state.settings.panelOpen });
   }
 
@@ -602,7 +643,7 @@
     ui.learningLine.classList.toggle("lm-hidden", !state.settings.showLearning || !cue);
     ui.nativeLine.classList.toggle("lm-hidden", !state.settings.showNative || !native);
     if (cue) renderWords(ui.learningLine, cue.text, state.settings.learningLang);
-    if (native) renderWords(ui.nativeLine, native.text, state.settings.nativeLang);
+    if (native) renderWords(ui.nativeLine, native.text, state.settings.nativeLang, state.settings.nativeInteractive);
     if (state.tab === "subs") highlightTranscript(idx);
   }
 
@@ -659,7 +700,7 @@
       if (native) {
         const nativeLine = document.createElement("div");
         nativeLine.className = "lm-cue-native";
-        renderWords(nativeLine, native, state.settings.nativeLang);
+        renderWords(nativeLine, native, state.settings.nativeLang, state.settings.nativeInteractive);
         row.append(nativeLine);
       }
       fragment.append(row);
@@ -668,20 +709,36 @@
     ui.panelBody.scrollTop = scroll;
   }
 
+  function langLabel(code) {
+    const found = LM_LANGUAGES.find((item) => item.code === code);
+    return found ? found.native : code || "其他";
+  }
+
   function renderWordsTab() {
     const mine = state.vocab;
     if (!mine.length) {
       ui.panelBody.innerHTML = `<div class="lm-empty">还没有生词。点击字幕中的单词查阅，或右键直接收藏。</div>`;
       return;
     }
-    ui.panelBody.innerHTML = mine
-      .slice(0, 80)
-      .map(
-        (item) => `<div class="lm-vocab-item" data-id="${item.id}">
+    const groups = new Map();
+    mine.forEach((item) => {
+      const key = item.lang || "und";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    });
+    ui.panelBody.innerHTML = Array.from(groups.entries())
+      .map(([lang, items]) => {
+        const rows = items
+          .slice(0, 40)
+          .map(
+            (item) => `<div class="lm-vocab-item" data-id="${item.id}">
           <div><strong>${escapeHtml(item.word)}</strong><span>${escapeHtml(item.translation || "")}</span></div>
           <div><span>${escapeHtml(item.context || "")}</span></div>
         </div>`
-      )
+          )
+          .join("");
+        return `<div class="lm-pos">${escapeHtml(langLabel(lang))} · ${items.length}</div>${rows}`;
+      })
       .join("");
     ui.panelBody.querySelectorAll(".lm-vocab-item").forEach((el) => {
       el.addEventListener("click", () => {

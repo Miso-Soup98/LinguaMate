@@ -19,7 +19,22 @@
 
   function send(type, payload = {}) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage(Object.assign({ type }, payload), (res) => resolve(res || {}));
+      try {
+        if (!chrome.runtime || !chrome.runtime.id) {
+          resolve({ ok: false, error: "invalidated" });
+          return;
+        }
+        chrome.runtime.sendMessage(Object.assign({ type }, payload), (res) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            resolve({ ok: false, error: err.message });
+            return;
+          }
+          resolve(res || {});
+        });
+      } catch (err) {
+        resolve({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
     });
   }
 
@@ -45,6 +60,7 @@
       <div class="lm-dict lm-hidden" id="lm-dict"></div>
     `;
     ui.root = root;
+    ui.toolbar = root.querySelector(".lm-toolbar");
     ui.subs = root.querySelector("#lm-subs");
     ui.learningLine = root.querySelector("#lm-learning-line");
     ui.nativeLine = root.querySelector("#lm-native-line");
@@ -72,9 +88,9 @@
     });
     document.addEventListener("mouseover", onHover);
     document.addEventListener("mouseout", onLeave);
-    makeDraggable(root.querySelector(".lm-toolbar"), root.querySelector(".lm-toolbar"), "lmPrimeToolbar");
+    makeDraggable(ui.toolbar, ui.toolbar, "lmPrimeToolbar");
     makeDraggable(ui.panel.querySelector(".lm-panel-tabs"), ui.panel, "lmPrimePanel");
-    restoreDrag(root.querySelector(".lm-toolbar"), "lmPrimeToolbar");
+    restoreDrag(ui.toolbar, "lmPrimeToolbar");
     restoreDrag(ui.panel, "lmPrimePanel");
   }
 
@@ -113,9 +129,13 @@
         target.classList.remove("lm-dragging");
         if (!moved) return;
         target.dataset.suppressClick = "1";
-        chrome.storage.local.set({
-          [key]: { left: target.style.left, top: target.style.top }
-        });
+        try {
+          chrome.storage.local.set({
+            [key]: { left: target.style.left, top: target.style.top }
+          });
+        } catch (err) {
+          /* extension was reloaded */
+        }
       };
       handle.addEventListener("pointermove", move);
       handle.addEventListener("pointerup", up);
@@ -129,6 +149,7 @@
   }
 
   function restoreDrag(target, key) {
+    if (!chrome.storage?.local) return;
     chrome.storage.local.get(key, (stored) => {
       const pos = stored && stored[key];
       if (!pos || !pos.left || !pos.top) return;
@@ -160,10 +181,9 @@
   function mount() {
     if (!videoEl()) return;
     ensureUi();
-    const toolbar = ui.root.querySelector(".lm-toolbar");
-    if (ui.root.parentElement !== document.documentElement) document.documentElement.appendChild(ui.root);
-    if (toolbar.parentElement !== document.documentElement) document.documentElement.appendChild(toolbar);
-    if (ui.panel.parentElement !== document.documentElement) document.documentElement.appendChild(ui.panel);
+    if (ui.root && ui.root.parentElement !== document.documentElement) document.documentElement.appendChild(ui.root);
+    if (ui.toolbar && ui.toolbar.parentElement !== document.documentElement) document.documentElement.appendChild(ui.toolbar);
+    if (ui.panel && ui.panel.parentElement !== document.documentElement) document.documentElement.appendChild(ui.panel);
     document.documentElement.classList.add("lm-prime-captions");
     ui.learningLine.style.fontSize = `${state.settings.fontSize || 22}px`;
     ui.nativeLine.style.fontSize = `${Math.max(14, (state.settings.fontSize || 22) - 4)}px`;
@@ -240,8 +260,12 @@
     }
   }
 
-  function renderWords(target, text, lang) {
+  function renderWords(target, text, lang, interactive = true) {
     target.replaceChildren();
+    if (!interactive) {
+      target.textContent = text || "";
+      return;
+    }
     tokenize(text, lang).forEach((token) => {
       if (!token.word) {
         target.appendChild(document.createTextNode(token.text));
@@ -277,7 +301,7 @@
     ui.learningLine.classList.toggle("lm-hidden", !cue);
     ui.nativeLine.classList.toggle("lm-hidden", !native);
     if (cue) renderWords(ui.learningLine, cue.text, state.settings.learningLang);
-    if (native) renderWords(ui.nativeLine, native, state.settings.nativeLang);
+    if (native) renderWords(ui.nativeLine, native, state.settings.nativeLang, state.settings.nativeInteractive);
     ui.panelBody.querySelectorAll(".lm-cue").forEach((el, i) => el.classList.toggle("active", i === idx));
   }
 

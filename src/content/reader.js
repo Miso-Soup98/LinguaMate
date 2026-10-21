@@ -7,7 +7,21 @@
 
   function send(type, payload = {}) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage(Object.assign({ type }, payload), (res) => resolve(res || {}));
+      try {
+        if (!chrome.runtime || !chrome.runtime.id) {
+          resolve({});
+          return;
+        }
+        chrome.runtime.sendMessage(Object.assign({ type }, payload), (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({});
+            return;
+          }
+          resolve(res || {});
+        });
+      } catch (err) {
+        resolve({});
+      }
     });
   }
 

@@ -1,4 +1,4 @@
-(function () {
+function linguaMateInstallPageHook() {
   const VERSION = 5;
   if (window.__linguaMateCleanup) window.__linguaMateCleanup();
 
@@ -6,6 +6,8 @@
   const bodies = new Map();
   const attempts = new Map();
   let pendingPot = null;
+  const extensionFallback = window.__lmExtensionFallback === true;
+  window.__lmExtensionFallback = false;
   const originalFetch = window.fetch ? window.fetch.bind(window) : null;
   const originalOpen = XMLHttpRequest.prototype.open;
   const originalSend = XMLHttpRequest.prototype.send;
@@ -95,7 +97,7 @@
     }, "*");
   }
 
-  if (originalFetch) {
+  if (originalFetch && !extensionFallback) {
     window.fetch = function (input, init) {
       const url = typeof input === "string" ? input : input && input.url;
       const response = originalFetch(input, init);
@@ -353,4 +355,35 @@
   };
   window.__linguaMatePage = VERSION;
   window.postMessage({ source: "linguamate-page", type: "LM_READY", href: location.href }, "*");
+}
+
+(function () {
+  const nonce = Math.random().toString(36).slice(2);
+  window.__lmPageNonce = "";
+  const source = `window.__lmPageNonce=${JSON.stringify(nonce)};(${linguaMateInstallPageHook.toString()})();`;
+  const script = document.createElement("script");
+  try {
+    if (window.trustedTypes && window.trustedTypes.createPolicy) {
+      try {
+        const policy = window.trustedTypes.createPolicy(`lm${nonce}`, {
+          createScript(text) {
+            return text;
+          }
+        });
+        script.textContent = policy.createScript(source);
+      } catch (err) {
+        script.textContent = source;
+      }
+    } else {
+      script.textContent = source;
+    }
+    (document.documentElement || document.head).appendChild(script);
+    script.remove();
+  } catch (err) {
+    /* the page blocked the inline script */
+  }
+  if (window.__lmPageNonce !== nonce) {
+    window.__lmExtensionFallback = true;
+    linguaMateInstallPageHook();
+  }
 })();
