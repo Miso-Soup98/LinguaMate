@@ -3,7 +3,61 @@ html.lm-prime-captions .atvwebplayersdk-captions-overlay {
   pointer-events: none !important;
 }
 
+#lm-root.lm-prime-root {
+  position: fixed;
+  z-index: 2147482000;
+  margin: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#lm-root.lm-prime-root .lm-toolbar,
+#lm-root.lm-prime-root .lm-subs,
+#lm-root.lm-prime-root .lm-line {
+  pointer-events: auto;
+}
+
+#lm-root.lm-prime-root .lm-toolbar,
+.lm-prime-panel .lm-panel-tabs {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+#lm-root.lm-prime-root .lm-toolbar {
+  position: fixed;
+  top: 76px;
+  right: 16px;
+  left: auto;
+  z-index: 2147482002;
+}
+
+.lm-prime-panel.lm-dragging,
+#lm-root.lm-prime-root .lm-toolbar.lm-dragging {
+  cursor: grabbing;
+}
+
+#lm-root.lm-prime-root .lm-subs {
+  bottom: 14%;
+  width: min(920px, 94%);
+}
+
 .lm-prime-panel {
-  margin: 16px auto 40px;
-  width: min(920px, calc(100% - 32px));
+  position: fixed;
+  top: 76px;
+  right: 12px;
+  width: min(340px, calc(100vw - 24px));
+  max-height: calc(100vh - 96px);
+  margin: 0;
+  z-index: 2147482001;
+}
+
+.lm-prime-panel.lm-collapsed {
+  width: auto;
+  max-height: none;
+}
+
+.lm-prime-panel.lm-collapsed .lm-panel-body,
+.lm-prime-panel.lm-collapsed .lm-mini-help {
+  display: none;
 }

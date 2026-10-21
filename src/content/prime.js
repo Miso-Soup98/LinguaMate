@@ -26,24 +26,19 @@
     return videos.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0] || null;
   }
 
-  function playerBox() {
-    const video = videoEl();
-    if (!video) return null;
-    return video.closest(".atvwebplayersdk-video-player, .webPlayerSDKContainer") || video.parentElement;
-  }
-
   function ensureUi() {
     if (ui.root) return;
     const root = document.createElement("div");
     root.id = "lm-root";
+    root.className = "lm-prime-root";
     root.innerHTML = `
       <div class="lm-toolbar">
-        <button type="button" class="active">语伴</button>
+        <button type="button" class="active" data-act="panel">语伴</button>
         <span class="lm-mini-help">在播放器里打开要学习的字幕</span>
       </div>
       <div class="lm-subs" id="lm-subs">
-        <div class="lm-line lm-line-learning" id="lm-learning-line"></div>
-        <div class="lm-line lm-line-native" id="lm-native-line"></div>
+        <div class="lm-line lm-line-learning lm-hidden" id="lm-learning-line"></div>
+        <div class="lm-line lm-line-native lm-hidden" id="lm-native-line"></div>
       </div>
       <div class="lm-dict lm-hidden" id="lm-dict"></div>
     `;
@@ -54,9 +49,14 @@
     ui.dict = root.querySelector("#lm-dict");
     ui.panel = document.createElement("section");
     ui.panel.className = "lm-panel lm-prime-panel";
-    ui.panel.innerHTML = `<div class="lm-panel-tabs"><button type="button" class="active">字幕</button></div><div class="lm-panel-body"></div><div class="lm-mini-help">悬停查词 · 右键收藏 · A 上一句 · S 重播 · D 下一句</div>`;
+    ui.panel.innerHTML = `<div class="lm-panel-tabs"><button type="button" class="active" data-act="panel">字幕</button></div><div class="lm-panel-body"></div><div class="lm-mini-help">悬停查词 · 右键收藏 · A 上一句 · S 重播 · D 下一句</div>`;
     ui.panelBody = ui.panel.querySelector(".lm-panel-body");
+    root.querySelector("[data-act='panel']").addEventListener("click", togglePanel);
     ui.panel.addEventListener("click", (ev) => {
+      if (ev.target.closest("[data-act='panel']")) {
+        togglePanel();
+        return;
+      }
       const word = ev.target.closest(".lm-word");
       if (word) return;
       const row = ev.target.closest("[data-seek]");
@@ -70,20 +70,94 @@
     });
     document.addEventListener("mouseover", onHover);
     document.addEventListener("mouseout", onLeave);
+    makeDraggable(root.querySelector(".lm-toolbar"), root.querySelector(".lm-toolbar"), "lmPrimeToolbar");
+    makeDraggable(ui.panel.querySelector(".lm-panel-tabs"), ui.panel, "lmPrimePanel");
+    restoreDrag(root.querySelector(".lm-toolbar"), "lmPrimeToolbar");
+    restoreDrag(ui.panel, "lmPrimePanel");
+  }
+
+  function makeDraggable(handle, target, key) {
+    handle.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      if (ev.target.closest(".lm-word, .lm-panel-body, .lm-mini-help")) return;
+      const rect = target.getBoundingClientRect();
+      const startX = ev.clientX;
+      const startY = ev.clientY;
+      const originX = rect.left;
+      const originY = rect.top;
+      let moved = false;
+      const move = (event) => {
+        const dx = event.clientX - startX;
+        const dy = event.clientY - startY;
+        if (Math.abs(dx) + Math.abs(dy) < 4) return;
+        moved = true;
+        target.classList.add("lm-dragging");
+        const left = Math.min(window.innerWidth - 48, Math.max(0, originX + dx));
+        const top = Math.min(window.innerHeight - 40, Math.max(0, originY + dy));
+        target.style.left = `${Math.round(left)}px`;
+        target.style.top = `${Math.round(top)}px`;
+        target.style.right = "auto";
+        target.style.bottom = "auto";
+      };
+      const up = () => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        target.classList.remove("lm-dragging");
+        if (!moved) return;
+        target.dataset.suppressClick = "1";
+        chrome.storage.local.set({
+          [key]: { left: target.style.left, top: target.style.top }
+        });
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+    });
+    handle.addEventListener("click", (ev) => {
+      if (target.dataset.suppressClick !== "1") return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      target.dataset.suppressClick = "";
+    }, true);
+  }
+
+  function restoreDrag(target, key) {
+    chrome.storage.local.get(key, (stored) => {
+      const pos = stored && stored[key];
+      if (!pos || !pos.left || !pos.top) return;
+      target.style.left = pos.left;
+      target.style.top = pos.top;
+      target.style.right = "auto";
+    });
+  }
+
+  function togglePanel() {
+    ui.panel.classList.toggle("lm-collapsed");
+  }
+
+  function placeOverlay() {
+    const video = videoEl();
+    if (!video || !ui.root) return;
+    const rect = video.getBoundingClientRect();
+    if (rect.width < 120 || rect.height < 80) {
+      ui.root.classList.add("lm-hidden");
+      return;
+    }
+    ui.root.classList.remove("lm-hidden");
+    ui.root.style.left = `${Math.max(0, rect.left)}px`;
+    ui.root.style.top = `${Math.max(0, rect.top)}px`;
+    ui.root.style.width = `${Math.min(rect.width, window.innerWidth - Math.max(0, rect.left))}px`;
+    ui.root.style.height = `${Math.min(rect.height, window.innerHeight - Math.max(0, rect.top))}px`;
   }
 
   function mount() {
-    const box = playerBox();
-    if (!box) return;
+    if (!videoEl()) return;
     ensureUi();
-    if (ui.root.parentElement !== box) {
-      box.style.position = box.style.position || "relative";
-      box.appendChild(ui.root);
-    }
-    if (!ui.panel.isConnected) box.insertAdjacentElement("afterend", ui.panel);
+    if (ui.root.parentElement !== document.documentElement) document.documentElement.appendChild(ui.root);
+    if (ui.panel.parentElement !== document.documentElement) document.documentElement.appendChild(ui.panel);
     document.documentElement.classList.add("lm-prime-captions");
     ui.learningLine.style.fontSize = `${state.settings.fontSize || 22}px`;
     ui.nativeLine.style.fontSize = `${Math.max(14, (state.settings.fontSize || 22) - 4)}px`;
+    placeOverlay();
   }
 
   function escapeHtml(value) {
@@ -407,6 +481,17 @@
     mount();
     setInterval(mount, 1000);
     setInterval(() => {
+      if (state.cues.length) return;
+      window.postMessage({
+        source: "linguamate-content",
+        type: "LM_PRIME_PULL",
+        lang: state.settings.learningLang
+      }, "*");
+    }, 3000);
+    window.addEventListener("scroll", placeOverlay, true);
+    window.addEventListener("resize", placeOverlay);
+    setInterval(() => {
+      placeOverlay();
       if (state.cues.length) renderCurrent();
     }, 250);
   }
