@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "default_locale": "zh_CN",
   "action": {
     "default_title": "__MSG_extName__",
@@ -45,6 +45,28 @@
     },
     {
       "matches": [
+        "https://www.primevideo.com/*",
+        "https://primevideo.com/*",
+        "https://*.amazon.com/gp/video/*",
+        "https://*.amazon.co.jp/gp/video/*",
+        "https://*.amazon.co.uk/gp/video/*",
+        "https://*.amazon.de/gp/video/*",
+        "https://*.amazon.fr/gp/video/*",
+        "https://*.amazon.ca/gp/video/*",
+        "https://*.amazon.com.au/gp/video/*",
+        "https://*.amazon.in/gp/video/*",
+        "https://*.amazon.it/gp/video/*",
+        "https://*.amazon.es/gp/video/*",
+        "https://*.amazon.com.mx/gp/video/*",
+        "https://*.amazon.com.br/gp/video/*",
+        "https://*.amazon.sg/gp/video/*"
+      ],
+      "js": ["src/injected/prime.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
         "https://www.youtube.com/*",
         "https://youtube.com/*",
         "https://m.youtube.com/*"
@@ -56,6 +78,32 @@
         "src/content/youtube.js"
       ],
       "css": ["src/content/youtube.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.primevideo.com/*",
+        "https://primevideo.com/*",
+        "https://*.amazon.com/gp/video/*",
+        "https://*.amazon.co.jp/gp/video/*",
+        "https://*.amazon.co.uk/gp/video/*",
+        "https://*.amazon.de/gp/video/*",
+        "https://*.amazon.fr/gp/video/*",
+        "https://*.amazon.ca/gp/video/*",
+        "https://*.amazon.com.au/gp/video/*",
+        "https://*.amazon.in/gp/video/*",
+        "https://*.amazon.it/gp/video/*",
+        "https://*.amazon.es/gp/video/*",
+        "https://*.amazon.com.mx/gp/video/*",
+        "https://*.amazon.com.br/gp/video/*",
+        "https://*.amazon.sg/gp/video/*"
+      ],
+      "js": [
+        "src/shared/languages.js",
+        "src/shared/defaults.js",
+        "src/content/prime.js"
+      ],
+      "css": ["src/content/youtube.css", "src/content/prime.css"],
       "run_at": "document_idle"
     }
   ]

@@ -1,0 +1,9 @@
+html.lm-prime-captions .atvwebplayersdk-captions-overlay {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.lm-prime-panel {
+  margin: 16px auto 40px;
+  width: min(920px, calc(100% - 32px));
+}

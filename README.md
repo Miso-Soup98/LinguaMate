@@ -1,14 +1,14 @@
 # 语伴 LinguaMate
 
-在 YouTube 上用双语字幕、悬停词典和生词本学习外语的 Chrome 插件。
+在 YouTube 和 Amazon Prime Video 上用双语字幕、悬停词典和生词本学习外语的 Chrome 插件。
 
-A Chrome extension for learning languages on YouTube with bilingual subtitles, a hover dictionary, and a vocabulary notebook.
+A Chrome extension for learning languages on YouTube and Amazon Prime Video with bilingual subtitles, a hover dictionary, and a vocabulary notebook.
 
 ## 中文
 
 ### 能做什么
 
-- YouTube 双语字幕：学习语言加母语对照
+- YouTube 和 Amazon Prime Video 双语字幕：学习语言加母语对照
 - 优先使用视频自带字幕；没有对应语言时，用 YouTube 翻译轨道生成译文
 - 鼠标悬停单词即可查词，卡片包含音标、美式 / 英式朗读、词性、释义和例句
 - 右键单词直接加入生词本
@@ -21,7 +21,7 @@ A Chrome extension for learning languages on YouTube with bilingual subtitles, a
 
 ### 范围
 
-- 用于 YouTube 和普通网页。Netflix 字幕受版权和 DRM 保护，本插件不会拦截或复制。
+- 用于 YouTube、Amazon Prime Video 和普通网页。在 Amazon 播放器里打开要学习的字幕后，语伴会自动接上。Netflix 字幕受版权和 DRM 保护，本插件不会拦截或复制。
 
 ### 安装
 
@@ -53,7 +53,7 @@ A Chrome extension for learning languages on YouTube with bilingual subtitles, a
 
 ### What it does
 
-- Bilingual YouTube subtitles: the language you are learning, plus your native language
+- Bilingual subtitles on YouTube and Amazon Prime Video: the language you are learning, plus your native language
 - Prefers captions that come with the video, and falls back to YouTube's translated track
 - Hover a word for a dictionary card with IPA, American and British audio, part of speech, definitions, and examples
 - Right-click a word to save it
@@ -66,7 +66,7 @@ A Chrome extension for learning languages on YouTube with bilingual subtitles, a
 
 ### Scope
 
-- It works on YouTube and ordinary web pages. Netflix captions are protected by copyright and DRM, so this extension does not intercept or copy them.
+- It works on YouTube, Amazon Prime Video, and ordinary web pages. On Prime Video, turn on the subtitle language you are learning and LinguaMate picks it up. Netflix captions are protected by copyright and DRM, so this extension does not intercept or copy them.
 
 ### Install
 
