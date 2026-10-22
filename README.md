@@ -15,6 +15,8 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 听写模式：字幕默认隐藏，鼠标悬停才显示
 - 逐句暂停，以及 A / S / D 上一句、重播、下一句（按住可预览）
 - 右侧字幕列表会随页面滚动，不挡住推荐视频
+- Prime Video 字幕栏保持固定高度并自动跟随当前字幕；向上滚动可暂停，点击「继续跟随」恢复
+- Prime Video 查词需短暂停留，快速划过单词不会反复闪卡
 - 打开或关闭播放器 CC 时自动重新读取字幕
 - 生词本、间隔重复闪卡，可导出 CSV / Anki
 - 任意网页：右键「用语伴查阅」或「用语伴阅读」
@@ -71,6 +73,8 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Listening mode hides subtitles until you hover
 - Auto-pause after each line, plus A / S / D for previous, replay, and next (hold to peek)
 - The transcript sidebar scrolls with the page, so recommended videos stay clickable
+- Prime Video's fixed-height transcript follows the current subtitle; scroll up to pause following and click the follow button to resume
+- Prime Video dictionary cards wait for a brief hover, so passing over words does not flash cards
 - Reloads captions when you turn the player's captions on or off
 - Vocabulary notebook, spaced-repetition flashcards, and CSV / Anki export
 - On any page, right-click to look up a selection or read it in LinguaMate

@@ -47,13 +47,33 @@ html.lm-prime-captions .atvwebplayersdk-captions-overlay {
   top: 76px;
   right: 12px;
   width: min(340px, calc(100vw - 24px));
+  height: min(70vh, calc(100vh - 96px));
   max-height: calc(100vh - 96px);
+  box-sizing: border-box;
   margin: 0;
   z-index: 2147482001;
 }
 
+.lm-prime-panel .lm-panel-body {
+  flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+
+.lm-prime-panel .lm-panel-tabs,
+.lm-prime-panel > .lm-mini-help {
+  flex-shrink: 0;
+}
+
+.lm-prime-panel .lm-prime-follow {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
 .lm-prime-panel.lm-collapsed {
   width: auto;
+  height: auto;
   max-height: none;
 }
 

@@ -10,12 +10,15 @@
     vocab: [],
     token: 0,
     fullTrack: false,
+    followTranscript: true,
     statusText: "正在等待播放器提供字幕…"
   };
 
   const ui = {};
   let hideTimer = 0;
   let hoverWord = null;
+  let hoverTimer = 0;
+  let lookupToken = 0;
 
   function send(type, payload = {}) {
     return new Promise((resolve) => {
@@ -67,10 +70,17 @@
     ui.dict = root.querySelector("#lm-dict");
     ui.panel = document.createElement("section");
     ui.panel.className = "lm-panel lm-prime-panel";
-    ui.panel.innerHTML = `<div class="lm-panel-tabs"><button type="button" class="active" data-act="panel">字幕</button></div><div class="lm-panel-body"></div><div class="lm-mini-help">悬停查词 · 右键收藏 · A 上一句 · S 重播 · D 下一句</div>`;
+    ui.panel.innerHTML = `<div class="lm-panel-tabs"><button type="button" class="active" data-act="panel">字幕</button><button type="button" class="lm-prime-follow active" data-act="follow" aria-pressed="true" title="自动跟随当前字幕；向上滚动可暂停">跟随中</button></div><div class="lm-panel-body" tabindex="0" aria-label="字幕列表"></div><div class="lm-mini-help">停留查词 · 向上滚动暂停跟随 · A / S / D 切换字幕</div>`;
     ui.panelBody = ui.panel.querySelector(".lm-panel-body");
+    ui.followButton = ui.panel.querySelector("[data-act='follow']");
+    ui.cueRows = [];
+    ui.panelBody.addEventListener("scroll", onTranscriptScroll);
     root.querySelector("[data-act='panel']").addEventListener("click", togglePanel);
     ui.panel.addEventListener("click", (ev) => {
+      if (ev.target.closest("[data-act='follow']")) {
+        setTranscriptFollow(!state.followTranscript);
+        return;
+      }
       if (ev.target.closest("[data-act='panel']")) {
         togglePanel();
         return;
@@ -88,6 +98,8 @@
     });
     document.addEventListener("mouseover", onHover);
     document.addEventListener("mouseout", onLeave);
+    window.addEventListener("scroll", onDictViewportChange, true);
+    window.addEventListener("resize", onDictViewportChange);
     makeDraggable(ui.toolbar, ui.toolbar, "lmPrimeToolbar");
     makeDraggable(ui.panel.querySelector(".lm-panel-tabs"), ui.panel, "lmPrimePanel");
     restoreDrag(ui.toolbar, "lmPrimeToolbar");
@@ -97,7 +109,7 @@
   function makeDraggable(handle, target, key) {
     handle.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0) return;
-      if (ev.target.closest(".lm-word, .lm-panel-body, .lm-mini-help")) return;
+      if (ev.target.closest(".lm-word, .lm-panel-body, .lm-mini-help, [data-act='follow']")) return;
       ev.preventDefault();
       const rect = target.getBoundingClientRect();
       const startX = ev.clientX;
@@ -114,7 +126,7 @@
         moved = true;
         target.classList.add("lm-dragging");
         const maxLeft = Math.max(0, window.innerWidth - rect.width);
-        const maxTop = Math.max(0, window.innerHeight - 48);
+        const maxTop = Math.max(0, window.innerHeight - rect.height);
         const left = Math.min(maxLeft, Math.max(0, originX + dx));
         const top = Math.min(maxTop, Math.max(0, originY + dy));
         target.style.left = `${Math.round(left)}px`;
@@ -156,11 +168,60 @@
       target.style.left = pos.left;
       target.style.top = pos.top;
       target.style.right = "auto";
+      if (target === ui.panel) clampPanelPosition();
     });
+  }
+
+  function clampPanelPosition() {
+    if (!ui.panel?.isConnected) return;
+    const rect = ui.panel.getBoundingClientRect();
+    const left = Math.min(Math.max(0, rect.left), Math.max(0, window.innerWidth - rect.width));
+    const top = Math.min(Math.max(0, rect.top), Math.max(0, window.innerHeight - rect.height));
+    if (left !== rect.left) {
+      ui.panel.style.left = `${Math.round(left)}px`;
+      ui.panel.style.right = "auto";
+    }
+    if (top !== rect.top) ui.panel.style.top = `${Math.round(top)}px`;
   }
 
   function togglePanel() {
     ui.panel.classList.toggle("lm-collapsed");
+    clampPanelPosition();
+    followCurrentCue();
+  }
+
+  function setTranscriptFollow(enabled) {
+    state.followTranscript = enabled;
+    ui.followButton.classList.toggle("active", enabled);
+    ui.followButton.setAttribute("aria-pressed", String(enabled));
+    ui.followButton.textContent = enabled ? "跟随中" : "继续跟随";
+    if (enabled) followCurrentCue();
+  }
+
+  function onTranscriptScroll() {
+    const body = ui.panelBody;
+    const previous = ui.panelScrollTop ?? body.scrollTop;
+    ui.panelScrollTop = body.scrollTop;
+    if (body.scrollTop < previous - 1) {
+      setTranscriptFollow(false);
+    } else if (!state.followTranscript && body.scrollHeight - body.clientHeight - body.scrollTop <= 24) {
+      setTranscriptFollow(true);
+    }
+  }
+
+  function followCurrentCue() {
+    if (!state.followTranscript || ui.panel?.classList.contains("lm-collapsed")) return;
+    const row = ui.cueRows?.[state.index];
+    if (!row || !ui.panelBody.clientHeight) return;
+    const body = ui.panelBody.getBoundingClientRect();
+    const cue = row.getBoundingClientRect();
+    let delta = 0;
+    if (cue.height > body.height - 16) {
+      if (cue.top < body.top + 8 || cue.top > body.bottom - 8) delta = cue.top - body.top - 8;
+    } else if (cue.top < body.top + 8) delta = cue.top - body.top - 8;
+    else if (cue.bottom > body.bottom - 8) delta = cue.bottom - body.bottom + 8;
+    if (delta) ui.panelBody.scrollTop += delta;
+    ui.panelScrollTop = ui.panelBody.scrollTop;
   }
 
   function placeOverlay() {
@@ -184,6 +245,7 @@
     if (ui.root && ui.root.parentElement !== document.documentElement) document.documentElement.appendChild(ui.root);
     if (ui.toolbar && ui.toolbar.parentElement !== document.documentElement) document.documentElement.appendChild(ui.toolbar);
     if (ui.panel && ui.panel.parentElement !== document.documentElement) document.documentElement.appendChild(ui.panel);
+    clampPanelPosition();
     document.documentElement.classList.add("lm-prime-captions");
     ui.learningLine.style.fontSize = `${state.settings.fontSize || 22}px`;
     ui.nativeLine.style.fontSize = `${Math.max(14, (state.settings.fontSize || 22) - 4)}px`;
@@ -261,6 +323,9 @@
   }
 
   function renderWords(target, text, lang, interactive = true) {
+    const key = JSON.stringify([text, lang, interactive]);
+    if (target._lmWordsKey === key) return;
+    target._lmWordsKey = key;
     target.replaceChildren();
     if (!interactive) {
       target.textContent = text || "";
@@ -302,36 +367,65 @@
     ui.nativeLine.classList.toggle("lm-hidden", !native);
     if (cue) renderWords(ui.learningLine, cue.text, state.settings.learningLang);
     if (native) renderWords(ui.nativeLine, native, state.settings.nativeLang, state.settings.nativeInteractive);
-    ui.panelBody.querySelectorAll(".lm-cue").forEach((el, i) => el.classList.toggle("active", i === idx));
+    if (hoverWord && (!hoverWord.isConnected || hoverWord.closest(".lm-hidden"))) hideDict();
+    else if (dictOpen()) placeDict(hoverWord);
+    const active = ui.cueRows[idx];
+    if (ui.activeRow !== active) {
+      ui.activeRow?.classList.remove("active");
+      active?.classList.add("active");
+      ui.activeRow = active;
+      followCurrentCue();
+    }
   }
 
   function renderPanel() {
     if (!state.cues.length) {
       ui.panelBody.innerHTML = `<div class="lm-empty">${escapeHtml(state.statusText)}</div>`;
+      ui.cueRows = [];
+      ui.activeRow = null;
+      ui.panelScrollTop = ui.panelBody.scrollTop;
+      if (hoverWord && !hoverWord.isConnected) hideDict();
       return;
     }
-    const fragment = document.createDocumentFragment();
+    const scroll = ui.panelBody.scrollTop;
+    if (!ui.cueRows.length) ui.panelBody.replaceChildren();
     state.cues.forEach((cue, i) => {
-      const row = document.createElement("div");
-      row.className = `lm-cue${i === state.index ? " active" : ""}`;
+      let row = ui.cueRows[i];
+      if (!row) {
+        row = document.createElement("div");
+        row.className = "lm-cue";
+        const time = document.createElement("div");
+        time.className = "lm-cue-time";
+        const learning = document.createElement("div");
+        learning.className = "lm-cue-learning";
+        row.append(time, learning);
+        ui.cueRows.push(row);
+        ui.panelBody.appendChild(row);
+      }
+      row.classList.toggle("active", i === state.index);
       row.dataset.seek = String(cue.start);
       row.dataset.index = String(i);
-      const time = document.createElement("div");
-      time.className = "lm-cue-time";
-      time.textContent = formatTime(cue.start);
-      const learning = document.createElement("div");
-      learning.className = "lm-cue-learning";
-      renderWords(learning, cue.text, state.settings.learningLang);
-      row.append(time, learning);
+      row.querySelector(".lm-cue-time").textContent = formatTime(cue.start);
+      renderWords(row.querySelector(".lm-cue-learning"), cue.text, state.settings.learningLang);
+      let native = row.querySelector(".lm-cue-native");
       if (state.native[i]) {
-        const native = document.createElement("div");
-        native.className = "lm-cue-native";
+        if (!native) {
+          native = document.createElement("div");
+          native.className = "lm-cue-native";
+          row.appendChild(native);
+        }
         native.textContent = state.native[i];
-        row.append(native);
+      } else {
+        native?.remove();
       }
-      fragment.append(row);
     });
-    ui.panelBody.replaceChildren(fragment);
+    while (ui.cueRows.length > state.cues.length) ui.cueRows.pop().remove();
+    ui.activeRow = ui.cueRows[state.index];
+    ui.panelBody.scrollTop = scroll;
+    ui.panelScrollTop = ui.panelBody.scrollTop;
+    if (hoverWord && (!hoverWord.isConnected || hoverWord.closest(".lm-hidden"))) hideDict();
+    else if (dictOpen()) placeDict(hoverWord);
+    followCurrentCue();
   }
 
   function formatTime(ms) {
@@ -346,6 +440,7 @@
     if (play) video.play().catch(() => {});
     else video.pause();
     renderCurrent();
+    setTranscriptFollow(true);
   }
 
   async function translateCues(cues, token) {
@@ -453,7 +548,9 @@
   }
 
   async function showDict(wordEl) {
+    if (!wordEl?.isConnected) return;
     hoverWord = wordEl;
+    const token = ++lookupToken;
     const word = wordEl.dataset.word;
     const from = wordEl.dataset.lang || state.settings.learningLang;
     ui.dict.classList.remove("lm-hidden");
@@ -462,7 +559,11 @@
     placeDict(wordEl);
     const cue = state.cues[Number(wordEl.closest("[data-index]")?.dataset.index ?? state.index)];
     const res = await send("LM_LOOKUP", { word, from, to: state.settings.nativeLang, context: cue?.text || "" });
-    if (hoverWord !== wordEl) return;
+    if (token !== lookupToken || hoverWord !== wordEl) return;
+    if (!wordEl.isConnected) {
+      hideDict();
+      return;
+    }
     const data = res.result || { word, translation: "" };
     const entries = (data.entries || []).map((entry) => {
       const items = (entry.items || []).map((item, index) => `<div class="lm-entry"><div class="lm-gloss">${index + 1}. ${escapeHtml(item.gloss || item.definition || "")}</div>${item.example ? `<div class="lm-ex">例：${escapeHtml(item.example)}</div>` : ""}</div>`).join("");
@@ -496,28 +597,69 @@
   }
 
   function hideDict() {
+    clearTimeout(hoverTimer);
+    clearTimeout(hideTimer);
     hoverWord = null;
+    lookupToken += 1;
     ui.dict?.classList.add("lm-hidden");
   }
 
-  function onHover(ev) {
-    const word = ev.target.closest?.(".lm-word");
-    if (!word) {
-      if (ui.dict?.contains(ev.target)) clearTimeout(hideTimer);
-      return;
-    }
-    clearTimeout(hideTimer);
-    if (hoverWord !== word) showDict(word);
+  function isPrimeWord(word) {
+    return !!(word && (ui.subs?.contains(word) || ui.panel?.contains(word)));
   }
 
-  function onLeave(ev) {
-    const next = ev.relatedTarget;
-    if (next && (ui.dict?.contains(next) || next.closest?.(".lm-word") === hoverWord)) return;
+  function dictOpen() {
+    return !!(hoverWord && ui.dict && !ui.dict.classList.contains("lm-hidden"));
+  }
+
+  function inDictZone(node) {
+    return !!(node && (ui.dict?.contains(node) || hoverWord?.contains(node)));
+  }
+
+  function scheduleShow(wordEl) {
+    clearTimeout(hoverTimer);
+    clearTimeout(hideTimer);
+    if (hoverWord === wordEl && dictOpen()) return;
+    // Require a deliberate pause, and keep the current card while crossing words.
+    const delay = dictOpen() ? 480 : 300;
+    hoverTimer = setTimeout(() => {
+      if (!wordEl.isConnected || !wordEl.matches(":hover")) return;
+      showDict(wordEl);
+    }, delay);
+  }
+
+  function scheduleHide() {
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
       if (ui.dict?.matches(":hover") || hoverWord?.matches(":hover")) return;
+      if (isPrimeWord(document.querySelector(".lm-word:hover"))) return;
       hideDict();
-    }, 200);
+    }, 180);
+  }
+
+  function onHover(ev) {
+    if (ui.dict?.contains(ev.target)) {
+      clearTimeout(hoverTimer);
+      clearTimeout(hideTimer);
+      return;
+    }
+    const word = ev.target.closest?.(".lm-word");
+    if (isPrimeWord(word)) scheduleShow(word);
+  }
+
+  function onLeave(ev) {
+    const word = ev.target.closest?.(".lm-word");
+    if (!isPrimeWord(word) && !ui.dict?.contains(ev.target)) return;
+    const next = ev.relatedTarget;
+    if (word && word.contains(next)) return;
+    clearTimeout(hoverTimer);
+    if (inDictZone(next)) return;
+    scheduleHide();
+  }
+
+  function onDictViewportChange(ev) {
+    if (ev.type === "scroll" && ui.dict?.contains(ev.target)) return;
+    hideDict();
   }
 
   async function saveWord(word, context, lookup) {
@@ -582,7 +724,11 @@
       }, "*");
     }, 3000);
     window.addEventListener("scroll", placeOverlay, true);
-    window.addEventListener("resize", placeOverlay);
+    window.addEventListener("resize", () => {
+      placeOverlay();
+      clampPanelPosition();
+      followCurrentCue();
+    });
     setInterval(() => {
       placeOverlay();
       syncTextTracks();
