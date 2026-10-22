@@ -11,6 +11,8 @@ function linguaMateInstallPrimeHook() {
   let envelope = "";
   let preferredLang = "en";
   let pulling = false;
+  const trackLanguages = new Map();
+  let availableTracks = [];
 
   function isPlaybackUrl(url) {
     return /GetVodPlaybackResources|GetPlaybackResources/i.test(String(url || ""));
@@ -35,12 +37,12 @@ function linguaMateInstallPrimeHook() {
     }
   }
 
-  function publish(url, text) {
+  function publish(url, text, lang = trackLanguages.get(String(url)) || "") {
     const body = String(text || "").trim();
     if (body.length < 20) return;
     const lower = body.slice(0, 80).toLowerCase();
     if (lower.startsWith("<tt") || lower.startsWith("<?xml") || lower.startsWith("webvtt") || body.indexOf("<tt") !== -1) {
-      window.postMessage({ source: "linguamate-prime", type: "LM_TRACK", url: String(url || ""), text: body.slice(0, 2000000) }, "*");
+      window.postMessage({ source: "linguamate-prime", type: "LM_TRACK", lang, url: String(url || ""), text: body.slice(0, 2000000) }, "*");
     }
   }
 
@@ -88,10 +90,10 @@ function linguaMateInstallPrimeHook() {
       const bMatch = b.lang.toLowerCase().startsWith(want) ? 0 : 1;
       return aMatch - bMatch;
     });
-    const chosen = ranked.find((item) => item.lang.toLowerCase().startsWith(want)) || ranked[0];
+    const chosen = ranked.find((item) => item.lang.toLowerCase().split(/[-_]/)[0] === want) || ranked.find((item) => !item.lang);
     if (!chosen) return;
     const text = await fetchText(chosen.url);
-    publish(chosen.url, text);
+    if (preferredLang.toLowerCase().split("-")[0] === want) publish(chosen.url, text, chosen.lang);
   }
 
   async function harvestJson(text) {
@@ -110,7 +112,11 @@ function linguaMateInstallPrimeHook() {
       seen.add(item.url);
       unique.push(item);
     });
-    if (unique.length) await loadTrackList(unique);
+    if (unique.length) {
+      availableTracks = unique;
+      unique.forEach((track) => trackLanguages.set(track.url, track.lang));
+      await loadTrackList(unique);
+    }
   }
 
   function inspect(url, text, contentType) {
@@ -199,7 +205,8 @@ function linguaMateInstallPrimeHook() {
     const msg = event.data;
     if (!msg || msg.source !== "linguamate-content" || msg.type !== "LM_PRIME_PULL") return;
     if (msg.lang) preferredLang = String(msg.lang);
-    pullTracks();
+    if (availableTracks.length) loadTrackList(availableTracks);
+    else pullTracks();
   });
 }
 

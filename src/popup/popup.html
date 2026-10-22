@@ -9,7 +9,7 @@
     <header>
       <div>
         <h1>语伴</h1>
-        <p>YouTube 双语字幕学习盒</p>
+        <p>YouTube / Prime Video 双语字幕学习</p>
       </div>
       <label class="switch">
         <input id="enabled" type="checkbox" />
@@ -39,7 +39,7 @@
     <section class="row">
       <label>
         字幕字号
-        <input id="fontSize" type="range" min="16" max="36" />
+        <input id="fontSize" type="range" min="16" max="40" />
       </label>
       <label>
         英语口音
@@ -51,10 +51,13 @@
       <label>
         播放速度
         <select id="playbackRate">
+          <option value="0.5">0.5x</option>
           <option value="0.75">0.75x</option>
           <option value="1">1.0x</option>
           <option value="1.25">1.25x</option>
           <option value="1.5">1.5x</option>
+          <option value="1.75">1.75x</option>
+          <option value="2">2.0x</option>
         </select>
       </label>
     </section>
@@ -63,7 +66,9 @@
       <div id="stats">生词本 0</div>
       <button id="openOptions">打开生词本 / 闪卡</button>
     </footer>
+    <div class="operation-feedback"><p id="operationStatus" role="status" aria-live="polite"></p><button id="retrySettings" hidden>重试</button></div>
     <script src="../shared/languages.js"></script>
+    <script src="../shared/feedback.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

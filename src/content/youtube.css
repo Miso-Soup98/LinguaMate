@@ -1,4 +1,5 @@
 #lm-root,
+.lm-prime-toolbar,
 .lm-panel,
 .lm-toast,
 .lm-dict {
@@ -115,7 +116,7 @@ html.lm-hide-yt-captions .caption-window {
   transition: opacity 0.15s ease;
 }
 
-.lm-listen .lm-subs:hover .lm-line-learning,
+.lm-subs.lm-listen:hover .lm-line-learning,
 .lm-peek .lm-line-learning {
   opacity: 1;
 }
@@ -231,6 +232,27 @@ html.lm-hide-yt-captions .caption-window {
 .lm-vocab-status[data-error="true"] {
   color: var(--lm-danger);
 }
+
+.lm-feedback-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 10px 16px;
+  border: 1px solid #2dd4bf;
+  border-radius: 12px;
+  background: rgba(12, 18, 24, 0.96);
+  color: #eef4f8;
+  font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.lm-feedback-toast[hidden] { display: none !important; }
+.lm-feedback-toast[data-tone="error"] { border-color: #fb7185; }
+.lm-feedback-toast[data-tone="pending"] { border-color: #9fb0bd; }
 
 .lm-dict-trans { margin-top: 8px; font-size: 16px; }
 .lm-dict-senses { margin-top: 8px; color: var(--lm-muted); font-size: 12px; line-height: 1.5; }

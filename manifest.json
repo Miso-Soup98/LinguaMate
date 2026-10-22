@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
-  "version": "1.7.4",
+  "version": "1.8.0",
   "default_locale": "zh_CN",
   "action": {
     "default_title": "__MSG_extName__",
@@ -74,7 +74,9 @@
       "js": [
         "src/shared/languages.js",
         "src/shared/defaults.js",
+        "src/shared/feedback.js",
         "src/shared/frequency.js",
+        "src/shared/captions.js",
         "src/shared/vocab-button.js",
         "src/content/youtube.js"
       ],
@@ -102,6 +104,9 @@
       "js": [
         "src/shared/languages.js",
         "src/shared/defaults.js",
+        "src/shared/feedback.js",
+        "src/shared/frequency.js",
+        "src/shared/captions.js",
         "src/shared/vocab-button.js",
         "src/content/prime.js"
       ],

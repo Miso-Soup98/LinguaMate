@@ -118,3 +118,19 @@ main { padding: 28px; }
 .settings label { display: grid; gap: 6px; }
 .settings .check { grid-template-columns: auto 1fr; align-items: center; }
 .help { max-width: 640px; color: #c5d2dc; }
+
+.toolbar { flex-wrap: wrap; }
+.backup-box { background: #101820; padding: 14px 18px; border-radius: 12px; margin-bottom: 16px; }
+.backup-box summary { cursor: pointer; color: #2dd4bf; }
+.backup-box label { display: block; margin: 12px 0; }
+.backup-box p { color: #9fb0bd; }
+.backup-box select, .backup-box button, .operation-feedback button { background: #1a2430; color: #eef4f8; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; padding: 8px 10px; }
+.operation-feedback { display: flex; gap: 10px; align-items: center; min-height: 34px; margin-bottom: 8px; }
+.operation-feedback p { margin: 0; color: #9fb0bd; }
+[data-tone="success"] { color: #2dd4bf !important; }
+[data-tone="error"] { color: #fb7185 !important; }
+button:disabled, input:disabled, select:disabled { opacity: .55; cursor: wait; }
+.item strong, .item .ctx, .card p { overflow-wrap: anywhere; }
+.item small { color: #9fb0bd; }
+[hidden] { display: none !important; }
+@media (max-width: 850px) { body { grid-template-columns: 160px 1fr; } main { padding: 18px; } .item { grid-template-columns: 1fr; gap: 6px; } .item menu { margin: 0; padding: 0; } }

@@ -17,14 +17,14 @@ html.lm-prime-captions .atvwebplayersdk-captions-overlay {
   pointer-events: auto;
 }
 
-#lm-root.lm-prime-root .lm-toolbar,
+.lm-prime-toolbar,
 .lm-prime-panel .lm-panel-tabs {
   cursor: grab;
   touch-action: none;
   user-select: none;
 }
 
-#lm-root.lm-prime-root .lm-toolbar {
+.lm-prime-toolbar {
   position: fixed;
   top: 76px;
   right: 16px;
@@ -33,7 +33,7 @@ html.lm-prime-captions .atvwebplayersdk-captions-overlay {
 }
 
 .lm-prime-panel.lm-dragging,
-#lm-root.lm-prime-root .lm-toolbar.lm-dragging {
+.lm-prime-toolbar.lm-dragging {
   cursor: grabbing;
 }
 

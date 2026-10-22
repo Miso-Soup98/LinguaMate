@@ -10,6 +10,8 @@
     cues: [],
     nativeCues: [],
     index: -1,
+    activeIndex: -1,
+    lastTickMs: null,
     vocab: [],
     known: {},
     tab: "subs",
@@ -35,37 +37,11 @@
   }
 
   function send(type, payload = {}) {
-    return new Promise((resolve) => {
-      try {
-        if (!chrome.runtime || !chrome.runtime.id) {
-          resolve({ ok: false, error: "invalidated" });
-          return;
-        }
-        chrome.runtime.sendMessage(Object.assign({ type }, payload), (res) => {
-          const err = chrome.runtime.lastError;
-          if (err) {
-            resolve({ ok: false, error: err.message });
-            return;
-          }
-          resolve(res || { ok: false, error: "no_response" });
-        });
-      } catch (err) {
-        resolve({ ok: false, error: String(err && err.message ? err.message : err) });
-      }
-    });
+    return lmSendMessage(type, payload);
   }
 
   function toast(text) {
-    let el = $(".lm-toast");
-    if (!el) {
-      el = document.createElement("div");
-      el.className = "lm-toast";
-      document.documentElement.appendChild(el);
-    }
-    el.textContent = text;
-    el.classList.remove("lm-hidden");
-    clearTimeout(el._t);
-    el._t = setTimeout(() => el.classList.add("lm-hidden"), 1600);
+    lmNotify(text);
   }
 
   function videoEl() {
@@ -198,20 +174,18 @@
     });
 
     ui.toolbar.addEventListener("click", onToolbarClick);
-    ui.learningSelect.addEventListener("change", () => {
-      persist({ learningLang: ui.learningSelect.value });
-      loadCaptions(true);
+    ui.learningSelect.addEventListener("change", async () => {
+      if (await persist({ learningLang: ui.learningSelect.value })) loadCaptions(true);
     });
-    ui.nativeSelect.addEventListener("change", () => {
-      persist({ nativeLang: ui.nativeSelect.value });
-      loadCaptions(true);
+    ui.nativeSelect.addEventListener("change", async () => {
+      if (await persist({ nativeLang: ui.nativeSelect.value })) loadCaptions(true);
     });
 
     ui.subs.addEventListener("contextmenu", (ev) => {
       const word = ev.target.closest(".lm-word");
       if (!word) return;
       ev.preventDefault();
-      saveWord(word.dataset.word);
+      saveWord(word.dataset.word, cueForWord(word)?.text, null, word.dataset.lang);
     });
 
     const panel = document.createElement("section");
@@ -243,7 +217,7 @@
       if (!word) return;
       ev.preventDefault();
       rememberCue(word);
-      saveWord(word.dataset.word, cueForWord(word)?.text);
+      saveWord(word.dataset.word, cueForWord(word)?.text, null, word.dataset.lang);
     });
   }
 
@@ -365,7 +339,18 @@
     ui.root.classList.toggle("lm-hidden", !state.settings.enabled);
     if (ui.panel) ui.panel.classList.toggle("lm-hidden", !state.settings.enabled || !state.settings.panelOpen);
     const video = videoEl();
-    if (video && state.settings.enabled) video.playbackRate = Number(state.settings.playbackRate) || 1;
+    if (video && ui.clockVideo !== video) {
+      ui.clockVideo?.removeEventListener("seeking", resetPlaybackClock);
+      ui.clockVideo?.removeEventListener("seeked", resetPlaybackClock);
+      video.addEventListener("seeking", resetPlaybackClock);
+      video.addEventListener("seeked", resetPlaybackClock);
+      ui.clockVideo = video;
+    }
+    if (video && state.settings.enabled && (ui.rateVideo !== video || ui.appliedRate !== state.settings.playbackRate)) {
+      video.playbackRate = Number(state.settings.playbackRate) || 1;
+      ui.rateVideo = video;
+      ui.appliedRate = state.settings.playbackRate;
+    }
   }
 
   function applyCaptionVisibility() {
@@ -376,13 +361,26 @@
   }
 
   async function persist(patch) {
-    state.settings = lmMergeSettings(Object.assign({}, state.settings, patch));
+    if (ui.settingsBusy) return false;
+    ui.settingsBusy = true;
+    ui.toolbar.querySelectorAll("button, select").forEach((control) => { control.disabled = true; });
+    lmNotify("正在保存设置…", "pending");
+    const result = await send("LM_SET_SETTINGS", { settings: patch });
+    ui.settingsBusy = false;
+    ui.toolbar.querySelectorAll("button, select").forEach((control) => { control.disabled = false; });
+    if (!result.ok) {
+      syncToolbar();
+      lmNotify(result.error || "设置保存失败，请重试", "error");
+      return false;
+    }
+    state.settings = lmMergeSettings(result.settings || { ...state.settings, ...patch });
     syncToolbar();
     placePanel();
     applyCaptionVisibility();
     renderCurrent();
     if (state.tab === "subs") renderTranscript();
-    await send("LM_SET_SETTINGS", { settings: patch });
+    lmNotify("设置已保存");
+    return true;
   }
 
   async function onToolbarClick(ev) {
@@ -409,11 +407,9 @@
         .replace(/\s+/g, " ")
         .trim();
       if (!text || text === "\n") continue;
-      rows.push({
-        start: event.tStartMs || 0,
-        end: (event.tStartMs || 0) + (event.dDurationMs || 1500),
-        text
-      });
+      const start = Number(event.tStartMs ?? 0);
+      const duration = Number(event.dDurationMs ?? 1500);
+      if (Number.isFinite(start) && start >= 0 && Number.isFinite(duration) && duration > 0) rows.push({ start, end: start + duration, text });
     }
     return mergeCues(rows);
   }
@@ -447,18 +443,20 @@
 
   function parseXml(xml) {
     const doc = new DOMParser().parseFromString(xml, "text/xml");
+    if (doc.getElementsByTagName("parsererror").length) return [];
+    if (doc.documentElement.localName === "tt") return lmParseCaptionTrack(xml).cues;
     const rows = [];
     Array.from(doc.getElementsByTagName("text")).forEach((node) => {
       const start = parseFloat(node.getAttribute("start") || "0") * 1000;
       const dur = parseFloat(node.getAttribute("dur") || "1.5") * 1000;
       const text = cleanCaption(node.textContent);
-      if (text) rows.push({ start, end: start + dur, text });
+      if (text && Number.isFinite(start) && start >= 0 && Number.isFinite(dur) && dur > 0) rows.push({ start, end: start + dur, text });
     });
     Array.from(doc.getElementsByTagName("p")).forEach((node) => {
       const start = parseFloat(node.getAttribute("t") || "0");
       const dur = parseFloat(node.getAttribute("d") || "1500");
       const text = cleanCaption(node.textContent);
-      if (text) rows.push({ start, end: start + dur, text });
+      if (text && Number.isFinite(start) && start >= 0 && Number.isFinite(dur) && dur > 0) rows.push({ start, end: start + dur, text });
     });
     return mergeCues(rows);
   }
@@ -491,7 +489,7 @@
   function parseCaptions(text) {
     const trimmed = String(text || "").trim();
     if (!trimmed) return [];
-    if (trimmed.startsWith("WEBVTT")) return parseVtt(trimmed);
+    if (trimmed.startsWith("WEBVTT")) return lmParseCaptionTrack(trimmed).cues;
     if (trimmed[0] === "<") return parseXml(trimmed);
     try {
       if (trimmed[0] === "{" || trimmed[0] === "[") return parseEvents(JSON.parse(trimmed));
@@ -540,6 +538,7 @@
   }
 
   async function loadCaptions(force) {
+    if (!state.settings.enabled) return;
     const videoId = currentVideoId();
     if (!videoId) return;
     const key = cacheKey(videoId);
@@ -645,8 +644,12 @@
   function currentIndex(ms) {
     for (let i = 0; i < state.cues.length; i += 1) {
       const cue = state.cues[i];
-      if (ms >= cue.start && ms < cue.end + 80) return i;
+      if (ms >= cue.start && ms < cue.end) return i;
     }
+    return -1;
+  }
+
+  function navigationIndex(ms) {
     let nearest = -1;
     for (let i = 0; i < state.cues.length; i += 1) {
       if (state.cues[i].start <= ms) nearest = i;
@@ -658,7 +661,8 @@
     if (!ui.learningLine) return;
     const video = videoEl();
     const idx = video ? currentIndex(video.currentTime * 1000) : -1;
-    state.index = idx;
+    state.activeIndex = idx;
+    state.index = idx >= 0 ? idx : video ? navigationIndex(video.currentTime * 1000) : -1;
     const cue = state.cues[idx];
     const native = state.nativeCues[idx];
     ui.learningLine.classList.toggle("lm-hidden", !state.settings.showLearning || !cue);
@@ -707,7 +711,7 @@
     const fragment = document.createDocumentFragment();
     state.cues.forEach((cue, i) => {
       const row = document.createElement("div");
-      row.className = `lm-cue${i === state.index ? " active" : ""}`;
+      row.className = `lm-cue${i === state.activeIndex ? " active" : ""}`;
       row.dataset.seek = String(cue.start);
       row.dataset.index = String(i);
       const time = document.createElement("div");
@@ -837,6 +841,7 @@
     const video = videoEl();
     if (!video) return;
     video.currentTime = Math.max(0, ms / 1000 + 0.01);
+    state.lastTickMs = null;
     if (play) video.play().catch(() => {});
     else video.pause();
     renderCurrent();
@@ -848,7 +853,7 @@
   }
 
   function jump(delta, pause) {
-    const idx = Math.min(state.cues.length - 1, Math.max(0, (state.index < 0 ? 0 : state.index) + delta));
+    const idx = Math.min(state.cues.length - 1, Math.max(0, state.index + delta));
     const cue = state.cues[idx];
     if (!cue) return;
     seekTo(cue.start, !pause);
@@ -986,19 +991,25 @@
       button.addEventListener("click", async () => {
         const chosen = button.dataset.accent === "uk" ? "uk" : "us";
         if (button.dataset.accent !== "read") {
+          const response = await send("LM_SET_SETTINGS", { settings: { accent: chosen } });
+          if (!response.ok) { lmNotify(response.error || "口音设置保存失败，请重试", "error"); return; }
           state.settings.accent = chosen;
           ui.dict.querySelectorAll("[data-accent]").forEach((item) => item.classList.toggle("active", item === button));
-          await send("LM_SET_SETTINGS", { settings: { accent: chosen } });
         }
         const audioUrl = chosen === "uk" ? data.audioUk : data.audioUs;
         playPronunciation(data.word, from, chosen, audioUrl);
       });
     });
-    ui.dict.querySelector("[data-known]").addEventListener("click", async () => {
-      await send("LM_MARK_KNOWN", { word: data.word, lang: state.settings.learningLang, known: true });
-      state.known[`${state.settings.learningLang}:${lmNormalizeWord(data.word)}`] = true;
+    ui.dict.querySelector("[data-known]").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+      button.disabled = true;
+      const result = await send("LM_MARK_KNOWN", { word: data.word, lang: from, known: true });
+      button.disabled = false;
+      if (!result.ok) { lmNotify(result.error || "标记失败，请重试", "error"); return; }
+      state.known = result.known;
       toast("已标记为认识");
-      renderCurrent();
+      syncWordMarkers();
     });
     ui.vocabButton = lmBindVocabButton(ui.dict.querySelector(".lm-dict-save"), {
       word: data.word,
@@ -1140,6 +1151,12 @@
       context: cue?.text || ""
     });
     if (token !== state.dictToken || hoverWord !== wordEl) return;
+    if (!res.ok) {
+      ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-vocab-status" role="alert" data-error="true">${escapeHtml(res.error || "查询失败，请重试")}</div><button type="button" class="lm-chip" data-retry>重新查询</button>`;
+      ui.dict.querySelector("[data-retry]").addEventListener("click", () => showDict(wordEl));
+      placeDict(wordEl);
+      return;
+    }
     const data = res.result || { word, translation: "", phonetic: "", senses: [], entries: [] };
     renderDict(data, cue, from);
     placeDict(wordEl);
@@ -1181,13 +1198,14 @@
     }
   }
 
-  async function saveWord(word, context, lookup) {
+  async function saveWord(word, context, lookup, lang = state.settings.learningLang) {
+    lmNotify("正在加入生词本…", "pending");
     const cue = state.cues[state.index];
     let data = lookup;
     if (!data) {
       const res = await send("LM_LOOKUP", {
         word,
-        from: state.settings.learningLang,
+        from: lang,
         to: state.settings.nativeLang,
         context: context || cue?.text || ""
       });
@@ -1198,7 +1216,7 @@
         word,
         translation: data.translation,
         phonetic: data.phonetic,
-        lang: state.settings.learningLang,
+        lang,
         nativeLang: state.settings.nativeLang,
         context: context || cue?.text || "",
         videoTitle: state.title,
@@ -1206,37 +1224,40 @@
         time: videoEl()?.currentTime || 0
       }
     });
-    if (saved.item) {
+    if (saved.ok && saved.item) {
       const idx = state.vocab.findIndex((row) => row.id === saved.item.id);
       if (idx >= 0) state.vocab[idx] = saved.item;
       else state.vocab.unshift(saved.item);
       toast(`已收藏 ${word}`);
       syncWordMarkers();
+      ui.vocabButton?.refresh();
       if (state.tab !== "subs") renderPanel();
+    } else {
+      lmNotify(saved.error || "加入生词本失败，请重试", "error");
     }
   }
+
+  function resetPlaybackClock() { state.lastTickMs = null; }
 
   function onTick() {
     if (!state.settings.enabled) return;
     const video = videoEl();
     if (!video) return;
-    const idx = currentIndex(video.currentTime * 1000);
-    if (idx !== state.index) {
-      renderCurrent();
-      if (state.settings.autoPause && idx > state.lastAutoPause && !state.peeking && !video.paused) {
-        state.lastAutoPause = idx;
-        video.pause();
-      }
-    }
+    const ms = video.currentTime * 1000;
+    const previous = state.cues[state.activeIndex];
+    const elapsed = state.lastTickMs === null ? Infinity : ms - state.lastTickMs;
+    if (state.settings.autoPause && !video.seeking && !state.peeking && !video.paused && previous && elapsed >= 0 && elapsed <= 1000 && state.lastTickMs < previous.end && ms >= previous.end) video.pause();
+    state.lastTickMs = ms;
+    if (currentIndex(ms) !== state.activeIndex) renderCurrent();
   }
 
   function isTyping(target) {
     const tag = (target && target.tagName) || "";
-    return tag === "INPUT" || tag === "TEXTAREA" || (target && target.isContentEditable);
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (target && target.isContentEditable);
   }
 
   function onKeyDown(ev) {
-    if (!state.settings.enabled || isTyping(ev.target)) return;
+    if (!state.settings.enabled || ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target)) return;
     const key = ev.key.toLowerCase();
     if (!["a", "s", "d"].includes(key)) return;
     ev.preventDefault();
@@ -1252,7 +1273,7 @@
   }
 
   function onKeyUp(ev) {
-    if (!state.settings.enabled || isTyping(ev.target)) return;
+    if (!state.settings.enabled || ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target)) return;
     const key = ev.key.toLowerCase();
     if (!["a", "s", "d"].includes(key)) return;
     ui.subs.classList.remove("lm-peek");
@@ -1268,14 +1289,42 @@
     hideDict();
   }
 
+  let storeGeneration = 0;
   async function refreshStore() {
+    const generation = ++storeGeneration;
+    const previous = state.settings;
     const [settingsRes, vocabRes] = await Promise.all([
       send("LM_GET_SETTINGS"),
       send("LM_VOCAB_LIST")
     ]);
-    if (settingsRes.settings) state.settings = lmMergeSettings(settingsRes.settings);
-    state.vocab = vocabRes.vocab || [];
-    state.known = vocabRes.known || {};
+    if (generation !== storeGeneration) return null;
+    if (settingsRes.ok) state.settings = lmMergeSettings(settingsRes.settings);
+    else lmNotify(settingsRes.error || "设置读取失败，请重试", "error");
+    if (vocabRes.ok) {
+      state.vocab = vocabRes.vocab;
+      state.known = vocabRes.known;
+    }
+    return {
+      reloadCaptions: previous.learningLang !== state.settings.learningLang || previous.nativeLang !== state.settings.nativeLang || (!previous.enabled && state.settings.enabled),
+      settingsChanged: JSON.stringify(previous) !== JSON.stringify(state.settings)
+    };
+  }
+
+  function applyStoredState(result) {
+    if (!result) return;
+    if (result.settingsChanged) {
+      syncToolbar();
+      placePanel();
+      applyCaptionVisibility();
+      state.lastTickMs = null;
+      if (!state.settings.enabled) { state.loadGen += 1; hideDict(); }
+      else {
+        renderCurrent();
+        if (result.reloadCaptions) loadCaptions(true);
+      }
+    }
+    syncWordMarkers();
+    if (state.tab !== "subs") renderPanel();
   }
 
   async function boot() {
@@ -1296,10 +1345,11 @@
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "sync" && changes) refreshStore().then(() => syncToolbar());
-    if (area === "local") refreshStore().then(() => {
-      syncWordMarkers();
-      if (state.tab !== "subs") renderPanel();
+    if (area === "sync" && changes) refreshStore().then(applyStoredState);
+    if (area === "local") refreshStore().then((result) => {
+      // Applied through the same path as sync changes so a newer vocabulary
+      // refresh cannot swallow an in-flight language or enable/disable update.
+      applyStoredState(result);
       if (changes.vocab) ui.vocabButton?.refresh();
     });
   });

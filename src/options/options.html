@@ -16,6 +16,7 @@
       </nav>
     </aside>
     <main>
+      <div class="operation-feedback"><p id="operationStatus" role="status" aria-live="polite"></p><button id="retryVocab" hidden>重试读取生词本</button></div>
       <section id="view-vocab">
         <header class="toolbar">
           <input id="search" placeholder="搜索单词、释义或例句" />
@@ -30,6 +31,15 @@
           <button id="exportCsv">导出 CSV</button>
           <button id="exportAnki">导出 Anki</button>
         </header>
+        <details class="backup-box">
+          <summary>完整备份与恢复（保留复习进度）</summary>
+          <p>JSON 包含全部生词、例句、复习进度和掌握记录。CSV / Anki 适合其他工具导入，不用于完整恢复。</p>
+          <button id="exportBackup">下载完整 JSON 备份</button>
+          <label>选择备份文件 <input id="importFile" type="file" accept=".json,application/json" /></label>
+          <label>恢复方式 <select id="importMode"><option value="merge">合并（保留当前同词进度）</option><option value="replace">替换全部（使用备份进度）</option></select></label>
+          <button id="importBackup" disabled>恢复备份</button>
+          <p id="backupStatus" role="status" aria-live="polite">请先选择备份，确认预览后恢复。</p>
+        </details>
         <div id="vocabList"></div>
       </section>
 
@@ -56,6 +66,7 @@
           <label class="check"><input name="hideYoutubeCaptions" type="checkbox" /> 隐藏 YouTube 原生字幕</label>
           <button type="submit">保存设置</button>
         </form>
+        <div class="operation-feedback"><p id="settingsStatus" role="status" aria-live="polite"></p><button id="retryLoadSettings" hidden>重试读取设置</button><button id="retrySaveSettings" hidden>重试保存</button></div>
         <article class="help">
           <h2>快捷键</h2>
           <p>A 上一句 · S 重播当前句 · D 下一句。按住不放会暂停预览，松开继续播放。</p>
@@ -67,6 +78,7 @@
       </section>
     </main>
     <script src="../shared/languages.js"></script>
+    <script src="../shared/feedback.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

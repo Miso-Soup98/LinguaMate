@@ -7,6 +7,10 @@
     cues: [],
     native: [],
     index: -1,
+    activeIndex: -1,
+    trackLang: "",
+    lastTickMs: null,
+    peeking: false,
     vocab: [],
     token: 0,
     fullTrack: false,
@@ -21,24 +25,7 @@
   let lookupToken = 0;
 
   function send(type, payload = {}) {
-    return new Promise((resolve) => {
-      try {
-        if (!chrome.runtime || !chrome.runtime.id) {
-          resolve({ ok: false, error: "invalidated" });
-          return;
-        }
-        chrome.runtime.sendMessage(Object.assign({ type }, payload), (res) => {
-          const err = chrome.runtime.lastError;
-          if (err) {
-            resolve({ ok: false, error: err.message });
-            return;
-          }
-          resolve(res || {});
-        });
-      } catch (err) {
-        resolve({ ok: false, error: String(err && err.message ? err.message : err) });
-      }
-    });
+    return lmSendMessage(type, payload);
   }
 
   function videoEl() {
@@ -64,6 +51,7 @@
     `;
     ui.root = root;
     ui.toolbar = root.querySelector(".lm-toolbar");
+    ui.toolbar.classList.add("lm-prime-toolbar");
     ui.subs = root.querySelector("#lm-subs");
     ui.learningLine = root.querySelector("#lm-learning-line");
     ui.nativeLine = root.querySelector("#lm-native-line");
@@ -94,7 +82,8 @@
       const word = ev.target.closest(".lm-word");
       if (!word) return;
       ev.preventDefault();
-      saveWord(word.dataset.word);
+      const cue = state.cues[Number(word.closest("[data-index]")?.dataset.index ?? state.index)];
+      saveWord(word.dataset.word, cue?.text, null, word.dataset.lang);
     });
     document.addEventListener("mouseover", onHover);
     document.addEventListener("mouseout", onLeave);
@@ -184,10 +173,86 @@
     if (top !== rect.top) ui.panel.style.top = `${Math.round(top)}px`;
   }
 
-  function togglePanel() {
-    ui.panel.classList.toggle("lm-collapsed");
+  async function togglePanel() {
+    if (ui.panelSaving) return;
+    ui.panelSaving = true;
+    const open = !state.settings.panelOpen;
+    const result = await send("LM_SET_SETTINGS", { settings: { panelOpen: open } });
+    ui.panelSaving = false;
+    if (!result.ok) {
+      lmNotify(result.error || "字幕栏设置保存失败，请重试", "error");
+      return;
+    }
+    applySettings(result.settings || { ...state.settings, panelOpen: open });
+    lmNotify(open ? "字幕栏已展开" : "字幕栏已收起");
     clampPanelPosition();
     followCurrentCue();
+  }
+
+  function syncSettings() {
+    if (!ui.root) return;
+    const enabled = state.settings.enabled;
+    ui.root.classList.toggle("lm-hidden", !enabled);
+    ui.toolbar.classList.toggle("lm-hidden", !enabled);
+    ui.panel.classList.toggle("lm-hidden", !enabled);
+    ui.panel.classList.toggle("lm-collapsed", !state.settings.panelOpen);
+    ui.subs.classList.toggle("lm-listen", !!state.settings.listenMode);
+    ui.learningLine.style.fontSize = `${state.settings.fontSize}px`;
+    ui.nativeLine.style.fontSize = `${Math.max(14, state.settings.fontSize - 4)}px`;
+    document.documentElement.classList.toggle("lm-prime-captions", enabled);
+    const video = videoEl();
+    if (video && ui.clockVideo !== video) {
+      ui.clockVideo?.removeEventListener("seeking", resetPlaybackClock);
+      ui.clockVideo?.removeEventListener("seeked", resetPlaybackClock);
+      video.addEventListener("seeking", resetPlaybackClock);
+      video.addEventListener("seeked", resetPlaybackClock);
+      ui.clockVideo = video;
+    }
+    if (enabled && video && (ui.rateVideo !== video || ui.appliedRate !== state.settings.playbackRate)) {
+      video.playbackRate = Number(state.settings.playbackRate) || 1;
+      ui.rateVideo = video;
+      ui.appliedRate = state.settings.playbackRate;
+    }
+    if (!enabled) hideDict();
+  }
+
+  function requestTrack() {
+    if (!state.settings.enabled) return;
+    window.postMessage({ source: "linguamate-content", type: "LM_PRIME_PULL", lang: state.settings.learningLang }, "*");
+  }
+
+  function applySettings(settings) {
+    const previous = state.settings;
+    state.settings = lmMergeSettings(settings);
+    const languageChanged = previous.learningLang !== state.settings.learningLang;
+    const translationChanged = previous.nativeLang !== state.settings.nativeLang;
+    if (languageChanged) {
+      state.token += 1;
+      state.cues = [];
+      state.native = [];
+      state.index = state.activeIndex = -1;
+      state.trackLang = "";
+      state.fullTrack = false;
+      state.lastLive = "";
+      state.statusText = "语言已切换，正在读取对应字幕…";
+      hideDict();
+      requestTrack();
+    } else if (translationChanged) {
+      state.token += 1;
+      state.native = [];
+      hideDict();
+    }
+    state.lastTickMs = null;
+    mount();
+    if (ui.panelBody) {
+      renderPanel();
+      renderCurrent();
+      syncWordMarkers();
+    }
+    if (state.settings.enabled && state.cues.length && (translationChanged || (!previous.enabled && state.settings.enabled))) {
+      state.token += 1;
+      translateCues(state.cues, state.token);
+    }
   }
 
   function setTranscriptFollow(enabled) {
@@ -232,6 +297,7 @@
       ui.root.classList.add("lm-hidden");
       return;
     }
+    if (!state.settings.enabled) return;
     ui.root.classList.remove("lm-hidden");
     ui.root.style.left = `${Math.max(0, rect.left)}px`;
     ui.root.style.top = `${Math.max(0, rect.top)}px`;
@@ -240,15 +306,18 @@
   }
 
   function mount() {
-    if (!videoEl()) return;
+    if (!videoEl()) {
+      for (const target of [ui.root, ui.toolbar, ui.panel]) target?.classList.add("lm-hidden");
+      document.documentElement.classList.remove("lm-prime-captions");
+      hideDict();
+      return;
+    }
     ensureUi();
     if (ui.root && ui.root.parentElement !== document.documentElement) document.documentElement.appendChild(ui.root);
     if (ui.toolbar && ui.toolbar.parentElement !== document.documentElement) document.documentElement.appendChild(ui.toolbar);
     if (ui.panel && ui.panel.parentElement !== document.documentElement) document.documentElement.appendChild(ui.panel);
     clampPanelPosition();
-    document.documentElement.classList.add("lm-prime-captions");
-    ui.learningLine.style.fontSize = `${state.settings.fontSize || 22}px`;
-    ui.nativeLine.style.fontSize = `${Math.max(14, (state.settings.fontSize || 22) - 4)}px`;
+    syncSettings();
     placeOverlay();
     if (!state.cues.length && ui.panelBody && !ui.panelBody.childElementCount) renderPanel();
   }
@@ -257,58 +326,8 @@
     return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
-  function parseClock(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return 0;
-    if (/ms$/.test(raw)) return parseFloat(raw);
-    if (/s$/.test(raw)) return parseFloat(raw) * 1000;
-    const parts = raw.split(":");
-    if (parts.length >= 3) {
-      const hours = parseFloat(parts[0]) || 0;
-      const minutes = parseFloat(parts[1]) || 0;
-      const seconds = parseFloat(parts[2].replace(",", ".")) || 0;
-      return ((hours * 60 + minutes) * 60 + seconds) * 1000;
-    }
-    const numeric = parseFloat(raw);
-    return Number.isFinite(numeric) ? numeric * 1000 : 0;
-  }
-
-  function localNameNodes(root, name) {
-    const found = [];
-    const walk = (node) => {
-      if (!node || node.nodeType !== 1) return;
-      if (node.localName === name) found.push(node);
-      Array.from(node.children || []).forEach(walk);
-    };
-    walk(root);
-    return found;
-  }
-
   function parseTrack(text) {
-    const trimmed = String(text || "").trim();
-    if (trimmed.startsWith("<")) {
-      const doc = new DOMParser().parseFromString(trimmed, "text/xml");
-      const lang = doc.documentElement?.getAttribute("xml:lang") || doc.documentElement?.getAttribute("lang") || "";
-      const cues = localNameNodes(doc, "p").map((node) => {
-        const start = parseClock(node.getAttribute("begin"));
-        const endAttr = node.getAttribute("end");
-        const end = endAttr ? parseClock(endAttr) : start + parseClock(node.getAttribute("dur") || "2s");
-        const line = (node.textContent || "").replace(/\s+/g, " ").trim();
-        return { start, end: end > start ? end : start + 1500, text: line };
-      }).filter((cue) => cue.text);
-      return { lang, cues };
-    }
-    if (trimmed.startsWith("{")) {
-      const data = JSON.parse(trimmed);
-      const list = data.timedtext?.text || data.cues || data.subtitles || [];
-      const cues = (Array.isArray(list) ? list : []).map((item) => ({
-        start: Number(item.start || item.begin || 0),
-        end: Number(item.end || item.start + 1500 || 0),
-        text: String(item.content || item.text || "").replace(/\s+/g, " ").trim()
-      })).filter((cue) => cue.text);
-      return { lang: data.lang || "", cues };
-    }
-    return { lang: "", cues: [] };
+    return lmParseCaptionTrack(text);
   }
 
   function tokenize(text, lang) {
@@ -331,6 +350,7 @@
       target.textContent = text || "";
       return;
     }
+    const saved = new Set(state.vocab.filter((item) => item.lang === lang).map((item) => item.word.trim().toLowerCase()));
     tokenize(text, lang).forEach((token) => {
       if (!token.word) {
         target.appendChild(document.createTextNode(token.text));
@@ -341,14 +361,32 @@
       span.textContent = token.text;
       span.dataset.word = token.text;
       span.dataset.lang = lang || state.settings.learningLang;
+      const isSaved = saved.has(token.text.trim().toLowerCase());
+      span.classList.toggle("lm-saved", isSaved);
+      span.classList.toggle("lm-rare", !isSaved && !!state.settings.highlightRare && !lmIsCommonWord(token.text, span.dataset.lang));
       target.appendChild(span);
     });
   }
 
+  function syncWordMarkers() {
+    const saved = new Set(state.vocab.map((item) => `${item.lang}:${item.word.trim().toLowerCase()}`));
+    for (const root of [ui.subs, ui.panel]) {
+      root?.querySelectorAll(".lm-word").forEach((word) => {
+        const isSaved = saved.has(`${word.dataset.lang}:${word.dataset.word.trim().toLowerCase()}`);
+        word.classList.toggle("lm-saved", isSaved);
+        word.classList.toggle("lm-rare", !isSaved && !!state.settings.highlightRare && !lmIsCommonWord(word.dataset.word, word.dataset.lang));
+      });
+    }
+  }
+
   function currentIndex(ms) {
     for (let i = 0; i < state.cues.length; i += 1) {
-      if (ms >= state.cues[i].start && ms < state.cues[i].end + 80) return i;
+      if (ms >= state.cues[i].start && ms < state.cues[i].end) return i;
     }
+    return -1;
+  }
+
+  function navigationIndex(ms) {
     let nearest = -1;
     state.cues.forEach((cue, i) => {
       if (cue.start <= ms) nearest = i;
@@ -360,12 +398,13 @@
     if (!ui.learningLine) return;
     const video = videoEl();
     const idx = video ? currentIndex(video.currentTime * 1000) : -1;
-    state.index = idx;
+    state.activeIndex = idx;
+    state.index = idx >= 0 ? idx : video ? navigationIndex(video.currentTime * 1000) : -1;
     const cue = state.cues[idx];
     const native = state.native[idx] || "";
-    ui.learningLine.classList.toggle("lm-hidden", !cue);
-    ui.nativeLine.classList.toggle("lm-hidden", !native);
-    if (cue) renderWords(ui.learningLine, cue.text, state.settings.learningLang);
+    ui.learningLine.classList.toggle("lm-hidden", !state.settings.showLearning || !cue);
+    ui.nativeLine.classList.toggle("lm-hidden", !state.settings.showNative || !native);
+    if (cue) renderWords(ui.learningLine, cue.text, state.trackLang || state.settings.learningLang);
     if (native) renderWords(ui.nativeLine, native, state.settings.nativeLang, state.settings.nativeInteractive);
     if (hoverWord && (!hoverWord.isConnected || hoverWord.closest(".lm-hidden"))) hideDict();
     else if (dictOpen()) placeDict(hoverWord);
@@ -402,11 +441,11 @@
         ui.cueRows.push(row);
         ui.panelBody.appendChild(row);
       }
-      row.classList.toggle("active", i === state.index);
+      row.classList.toggle("active", i === state.activeIndex);
       row.dataset.seek = String(cue.start);
       row.dataset.index = String(i);
       row.querySelector(".lm-cue-time").textContent = formatTime(cue.start);
-      renderWords(row.querySelector(".lm-cue-learning"), cue.text, state.settings.learningLang);
+      renderWords(row.querySelector(".lm-cue-learning"), cue.text, state.trackLang || state.settings.learningLang);
       let native = row.querySelector(".lm-cue-native");
       if (state.native[i]) {
         if (!native) {
@@ -414,13 +453,13 @@
           native.className = "lm-cue-native";
           row.appendChild(native);
         }
-        native.textContent = state.native[i];
+        renderWords(native, state.native[i], state.settings.nativeLang, state.settings.nativeInteractive);
       } else {
         native?.remove();
       }
     });
     while (ui.cueRows.length > state.cues.length) ui.cueRows.pop().remove();
-    ui.activeRow = ui.cueRows[state.index];
+    ui.activeRow = ui.cueRows[state.activeIndex];
     ui.panelBody.scrollTop = scroll;
     ui.panelScrollTop = ui.panelBody.scrollTop;
     if (hoverWord && (!hoverWord.isConnected || hoverWord.closest(".lm-hidden"))) hideDict();
@@ -437,6 +476,7 @@
     const video = videoEl();
     if (!video) return;
     video.currentTime = Math.max(0, ms / 1000 + 0.01);
+    state.lastTickMs = null;
     if (play) video.play().catch(() => {});
     else video.pause();
     renderCurrent();
@@ -447,14 +487,16 @@
     state.native = new Array(cues.length).fill("");
     const size = 30;
     for (let start = 0; start < cues.length; start += size) {
-      if (token !== state.token) return;
+      if (token !== state.token || !state.settings.enabled) return;
       const slice = cues.slice(start, start + size);
       const packed = slice.map((cue, index) => `[${start + index}] ${cue.text}`).join("\n");
       const res = await send("LM_TRANSLATE", { text: packed, from: "auto", to: state.settings.nativeLang });
+      if (token !== state.token || !state.settings.enabled) return;
       const translated = res.result?.text || "";
       const pattern = /\[(\d+)\]\s*([\s\S]*?)(?=\s*\[\d+\]|$)/g;
       translated.replace(pattern, (_, index, line) => {
-        state.native[Number(index)] = line.replace(/\s+/g, " ").trim();
+        const target = Number(index);
+        if (target >= start && target < start + slice.length) state.native[target] = line.replace(/\s+/g, " ").trim();
         return "";
       });
       renderPanel();
@@ -473,21 +515,16 @@
 
   function syncTextTracks() {
     const video = videoEl();
-    if (!video || !video.textTracks || state.fullTrack) return;
-    let best = [];
-    Array.from(video.textTracks).forEach((track) => {
-      try {
-        if (track.mode === "disabled") track.mode = "hidden";
-      } catch (err) {
-        /* some tracks reject mode changes */
-      }
-      const cues = cuesFromTextTrack(track);
-      if (cues.length > best.length) best = cues;
-    });
-    if (best.length < 2) return;
+    if (!state.settings.enabled || !video || !video.textTracks || state.fullTrack) return;
+    const candidates = Array.from(video.textTracks).filter((track) => languageMatches(track.language, state.settings.learningLang));
+    candidates.sort((a, b) => Number(b.mode === "showing") - Number(a.mode === "showing"));
+    const chosen = candidates.find((track) => cuesFromTextTrack(track).length);
+    if (!chosen) return;
+    const best = cuesFromTextTrack(chosen);
     state.fullTrack = true;
     state.token += 1;
     state.cues = best;
+    state.trackLang = chosen.language || state.settings.learningLang;
     state.native = [];
     renderPanel();
     renderCurrent();
@@ -495,7 +532,7 @@
   }
 
   function scrapeLiveCaption() {
-    if (state.fullTrack) return;
+    if (!state.settings.enabled || state.fullTrack) return;
     const nodes = document.querySelectorAll("[class*='captions-text'], [class*='CaptionsText']");
     const parts = [];
     nodes.forEach((node) => {
@@ -504,7 +541,19 @@
       if (text) parts.push(text);
     });
     const text = parts.join(" ");
-    if (!text || text === state.lastLive) return;
+    if (!text) {
+      const previous = state.cues[state.cues.length - 1];
+      const now = (videoEl()?.currentTime || 0) * 1000;
+      if (state.lastLive && previous && now > previous.start) previous.end = Math.min(previous.end, now);
+      state.lastLive = "";
+      return;
+    }
+    if (text === state.lastLive) {
+      const current = state.cues[state.cues.length - 1];
+      const now = (videoEl()?.currentTime || 0) * 1000;
+      if (current && now >= current.start) current.end = Math.max(current.end, now + 500);
+      return;
+    }
     state.lastLive = text;
     const now = (videoEl()?.currentTime || 0) * 1000;
     const prev = state.cues[state.cues.length - 1];
@@ -515,7 +564,12 @@
     renderCurrent();
   }
 
-  function applyTrack(text) {
+  function languageMatches(actual, expected) {
+    return !!actual && String(actual).toLowerCase().split(/[-_]/)[0] === String(expected).toLowerCase().split(/[-_]/)[0];
+  }
+
+  function applyTrack(text, language = "") {
+    if (!state.settings.enabled) return;
     let parsed;
     try {
       parsed = parseTrack(text);
@@ -524,10 +578,19 @@
       renderPanel();
       return;
     }
-    if (!parsed.cues.length) return;
+    const lang = parsed.lang || language;
+    if (lang && !languageMatches(lang, state.settings.learningLang)) return;
+    if (!parsed.cues.length) {
+      if (!state.cues.length) {
+        state.statusText = "字幕文件未包含可用时间轴，正在尝试读取画面字幕。";
+        renderPanel();
+      }
+      return;
+    }
     state.fullTrack = true;
     state.token += 1;
     state.cues = parsed.cues;
+    state.trackLang = lang || state.settings.learningLang;
     state.native = [];
     renderPanel();
     renderCurrent();
@@ -548,7 +611,7 @@
   }
 
   async function showDict(wordEl) {
-    if (!wordEl?.isConnected) return;
+    if (!state.settings.enabled || !wordEl?.isConnected) return;
     hoverWord = wordEl;
     const token = ++lookupToken;
     const word = wordEl.dataset.word;
@@ -564,6 +627,12 @@
       hideDict();
       return;
     }
+    if (!res.ok) {
+      ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-vocab-status" role="alert" data-error="true">${escapeHtml(res.error || "查询失败，请重试")}</div><button type="button" class="lm-chip" data-retry>重新查询</button>`;
+      ui.dict.querySelector("[data-retry]").addEventListener("click", () => showDict(wordEl));
+      placeDict(wordEl);
+      return;
+    }
     const data = res.result || { word, translation: "" };
     const entries = (data.entries || []).map((entry) => {
       const items = (entry.items || []).map((item, index) => `<div class="lm-entry"><div class="lm-gloss">${index + 1}. ${escapeHtml(item.gloss || item.definition || "")}</div>${item.example ? `<div class="lm-ex">例：${escapeHtml(item.example)}</div>` : ""}</div>`).join("");
@@ -571,10 +640,10 @@
     }).join("");
     ui.dict.innerHTML = `
       <div class="lm-dict-head"><div><div class="lm-dict-word">${escapeHtml(data.word || word)}</div><div class="lm-dict-trans">${escapeHtml(data.translation || "")}</div></div></div>
-      <div class="lm-accents">
+      ${String(from).toLowerCase().startsWith("en") ? `<div class="lm-accents">
         <button type="button" data-accent="us">美式<span class="lm-ipa">${escapeHtml(data.phoneticUs || data.phonetic || "")}</span></button>
         <button type="button" data-accent="uk">英式<span class="lm-ipa">${escapeHtml(data.phoneticUk || data.phonetic || "")}</span></button>
-      </div>
+      </div>` : `<div class="lm-accents"><button type="button" data-accent="read">朗读<span class="lm-ipa">${escapeHtml(data.phonetic || "")}</span></button></div>`}
       ${entries || `<div class="lm-dict-trans">${escapeHtml(data.translation || "暂无释义")}</div>`}
       <div class="lm-dict-context">${escapeHtml(cue?.text || "")}</div>
       <button type="button" class="lm-dict-save">加入生词本</button>
@@ -582,14 +651,17 @@
     ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
       button.addEventListener("click", () => send("LM_PRONOUNCE", {
         text: word,
-        tl: button.dataset.accent === "uk" ? "en-GB" : "en-US",
+        tl: String(from).toLowerCase().startsWith("en") ? button.dataset.accent === "uk" ? "en-GB" : "en-US" : from,
         audioUrl: button.dataset.accent === "uk" ? data.audioUk : data.audioUs
       }).then((clip) => {
-        if (!clip?.audio) return;
+        if (!clip?.audio) { lmNotify(clip?.error || "未能播放读音，请重试", "error"); return; }
         const binary = atob(clip.audio);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-        new Audio(URL.createObjectURL(new Blob([bytes], { type: clip.mime || "audio/mpeg" }))).play();
+        const url = URL.createObjectURL(new Blob([bytes], { type: clip.mime || "audio/mpeg" }));
+        const audio = new Audio(url);
+        audio.onended = () => URL.revokeObjectURL(url);
+        audio.play().catch(() => { URL.revokeObjectURL(url); lmNotify("未能播放读音，请重试", "error"); });
       }));
     });
     ui.vocabButton = lmBindVocabButton(ui.dict.querySelector(".lm-dict-save"), {
@@ -607,7 +679,10 @@
         videoUrl: location.href,
         time: videoEl()?.currentTime || 0
       }),
-      onChange: () => {
+      onChange: ({ saved, item }) => {
+        state.vocab = state.vocab.filter((row) => row.lang !== from || row.word.trim().toLowerCase() !== word.trim().toLowerCase());
+        if (saved) state.vocab.unshift(item);
+        syncWordMarkers();
         if (hoverWord?.isConnected && dictOpen()) placeDict(hoverWord);
       }
     });
@@ -623,7 +698,7 @@
   }
 
   function isPrimeWord(word) {
-    return !!(word && (ui.subs?.contains(word) || ui.panel?.contains(word)));
+    return !!(state.settings.enabled && word && (ui.subs?.contains(word) || ui.panel?.contains(word)));
   }
 
   function dictOpen() {
@@ -680,19 +755,20 @@
     hideDict();
   }
 
-  async function saveWord(word, context, lookup) {
+  async function saveWord(word, context, lookup, lang = state.trackLang || state.settings.learningLang) {
+    lmNotify("正在加入生词本…", "pending");
     const data = lookup || (await send("LM_LOOKUP", {
       word,
-      from: state.settings.learningLang,
+      from: lang,
       to: state.settings.nativeLang,
       context: context || ""
     })).result || {};
-    await send("LM_VOCAB_ADD", {
+    const saved = await send("LM_VOCAB_ADD", {
       item: {
         word,
         translation: data.translation || "",
         phonetic: data.phonetic || "",
-        lang: state.settings.learningLang,
+        lang,
         nativeLang: state.settings.nativeLang,
         context: context || "",
         videoTitle: document.title,
@@ -700,23 +776,58 @@
         time: videoEl()?.currentTime || 0
       }
     });
+    if (saved.ok && saved.item) {
+      state.vocab = state.vocab.filter((item) => item.id !== saved.item.id);
+      state.vocab.unshift(saved.item);
+      syncWordMarkers();
+      ui.vocabButton?.refresh();
+      lmNotify(`已加入生词本：${word}`);
+    } else {
+      lmNotify(saved.error || "加入生词本失败，请重试", "error");
+    }
   }
 
   function isTyping(target) {
     const tag = target?.tagName || "";
-    return tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable;
   }
 
-  document.addEventListener("keydown", (ev) => {
-    if (isTyping(ev.target) || !state.cues.length) return;
+  function onKeyDown(ev) {
+    if (!state.settings.enabled || ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target) || !state.cues.length) return;
     const key = ev.key.toLowerCase();
     if (!["a", "s", "d"].includes(key)) return;
     ev.preventDefault();
+    state.peeking = !!ev.repeat;
+    ui.subs.classList.add("lm-peek");
     const idx = Math.min(state.cues.length - 1, Math.max(0, state.index + (key === "a" ? -1 : key === "d" ? 1 : 0)));
     const cue = key === "s" ? state.cues[Math.max(0, state.index)] : state.cues[idx];
     if (cue) seekTo(cue.start, !ev.repeat);
     if (ev.repeat) videoEl()?.pause();
-  }, true);
+  }
+
+  function onKeyUp(ev) {
+    if (ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target) || !["a", "s", "d"].includes(ev.key.toLowerCase())) return;
+    ui.subs?.classList.remove("lm-peek");
+    if (state.peeking && state.settings.enabled) videoEl()?.play().catch(() => {});
+    state.peeking = false;
+  }
+
+  document.addEventListener("keydown", onKeyDown, true);
+  document.addEventListener("keyup", onKeyUp, true);
+
+  function resetPlaybackClock() { state.lastTickMs = null; }
+
+  function onTick() {
+    if (!state.settings.enabled) return;
+    const video = videoEl();
+    if (!video) return;
+    const ms = video.currentTime * 1000;
+    const previous = state.cues[state.activeIndex];
+    const elapsed = state.lastTickMs === null ? Infinity : ms - state.lastTickMs;
+    if (state.settings.autoPause && !video.seeking && !state.peeking && !video.paused && previous && elapsed >= 0 && elapsed <= 1000 && state.lastTickMs < previous.end && ms >= previous.end) video.pause();
+    state.lastTickMs = ms;
+    renderCurrent();
+  }
 
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
@@ -724,26 +835,34 @@
     if (!msg || msg.source !== "linguamate-prime") return;
     if (msg.type === "LM_TRACK") {
       mount();
-      applyTrack(msg.text);
+      applyTrack(msg.text, msg.lang);
     }
   });
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes.vocab) ui.vocabButton?.refresh();
+  let settingsGeneration = 0;
+  chrome.storage.onChanged.addListener(async (changes, area) => {
+    if (area === "sync") {
+      const generation = ++settingsGeneration;
+      const response = await send("LM_GET_SETTINGS");
+      if (generation === settingsGeneration && response.ok) applySettings(response.settings);
+      else if (!response.ok) lmNotify(response.error || "设置读取失败，请重试", "error");
+    }
+    if (area === "local" && changes.vocab) {
+      state.vocab = changes.vocab.newValue || [];
+      syncWordMarkers();
+      ui.vocabButton?.refresh();
+    }
   });
 
   async function boot() {
-    const res = await send("LM_GET_SETTINGS");
+    const [res, vocab] = await Promise.all([send("LM_GET_SETTINGS"), send("LM_VOCAB_LIST")]);
     if (res.settings) state.settings = lmMergeSettings(res.settings);
+    if (vocab.ok) state.vocab = vocab.vocab;
+    if (!res.ok) lmNotify(res.error || "设置读取失败，请刷新页面重试", "error");
     mount();
     setInterval(mount, 1000);
     setInterval(() => {
-      if (state.cues.length) return;
-      window.postMessage({
-        source: "linguamate-content",
-        type: "LM_PRIME_PULL",
-        lang: state.settings.learningLang
-      }, "*");
+      if (!state.fullTrack) requestTrack();
     }, 3000);
     window.addEventListener("scroll", placeOverlay, true);
     window.addEventListener("resize", () => {
@@ -755,7 +874,7 @@
       placeOverlay();
       syncTextTracks();
       scrapeLiveCaption();
-      if (state.cues.length) renderCurrent();
+      if (state.cues.length) onTick();
     }, 250);
   }
 

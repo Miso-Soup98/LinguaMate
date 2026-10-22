@@ -13,6 +13,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 鼠标悬停单词即可查词，卡片包含音标、美式 / 英式朗读、词性、释义和例句
 - 右键单词直接加入生词本
 - 单词卡显示收藏状态：点击加入生词本，再次点击移除，并显示操作结果
+- 设置、查词、收藏、删除和复习都有明确的成功或失败反馈；Prime Video 设置会实时生效
 - 听写模式：字幕默认隐藏，鼠标悬停才显示
 - 逐句暂停，以及 A / S / D 上一句、重播、下一句（按住可预览）
 - 右侧字幕列表会随页面滚动，不挡住推荐视频
@@ -20,6 +21,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Prime Video 查词需短暂停留，快速划过单词不会反复闪卡
 - 打开或关闭播放器 CC 时自动重新读取字幕
 - 生词本、间隔重复闪卡，可导出 CSV / Anki
+- 完整 JSON 备份与恢复，保留词条、掌握记录和复习进度；支持合并或确认后替换
 - 任意网页：右键「用语伴查阅」或「用语伴阅读」
 
 ### 范围
@@ -45,7 +47,9 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 
 然后打开一个带字幕的 YouTube 视频。点语伴图标，把「学习语言」设成视频的语言，把「母语 / 译文」设成你的母语。
 
-以后想更新到新版本：再按上面的步骤下载一次 ZIP 并解压。回到 `chrome://extensions`，在语伴卡片上点刷新按钮。不要重复点「加载已解压的扩展程序」，除非你想再装一份。刷新扩展后，把正在看的视频页也刷新一次。
+以后想更新到新版本：下载 ZIP 并解压后，把新版文件复制到当初加载的那个插件文件夹里，覆盖旧文件。回到 `chrome://extensions`，在语伴卡片上点刷新按钮，再刷新视频页。只解压到新文件夹然后点刷新，不会改变 Chrome 已加载的路径；如果移动了插件目录，需要重新选择加载目录。插件版本可以在扩展管理页查看。
+
+备份生词：打开「生词本 / 闪卡」，展开「完整备份与恢复」，点击导出 JSON。恢复时先选备份文件，确认预览数量，再选择恢复方式；默认合并并保留现有同词的复习进度，替换会要求再次确认。CSV / Anki 导出用于学习工具交换，完整迁移请使用 JSON 备份。
 
 ### 快捷键
 
@@ -72,6 +76,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Hover a word for a dictionary card with IPA, American and British audio, part of speech, definitions, and examples
 - Right-click a word to save it
 - Dictionary cards show saved status: click to add a word, click again to remove it, with confirmation after each action
+- Settings, lookups, saves, deletions, and reviews report success or failure; Prime Video settings update immediately
 - Listening mode hides subtitles until you hover
 - Auto-pause after each line, plus A / S / D for previous, replay, and next (hold to peek)
 - The transcript sidebar scrolls with the page, so recommended videos stay clickable
@@ -79,6 +84,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Prime Video dictionary cards wait for a brief hover, so passing over words does not flash cards
 - Reloads captions when you turn the player's captions on or off
 - Vocabulary notebook, spaced-repetition flashcards, and CSV / Anki export
+- Complete JSON backup and restore preserve vocabulary, known words, and review progress, with merge or confirmed replacement
 - On any page, right-click to look up a selection or read it in LinguaMate
 
 ### Scope
@@ -104,7 +110,9 @@ You do not need Git, and you do not need a GitHub account. Download the project 
 
 Open a YouTube video that has captions. Click the LinguaMate icon, set Learning language to the video's language, and set Native language to yours.
 
-To update later, download the zip again and unzip it. On `chrome://extensions`, click the reload button on the LinguaMate card. Do not click Load unpacked again unless you want a second copy. After reloading the extension, reload the video tab once.
+To update, unzip the new version and copy its files over the files in the folder originally loaded into Chrome. On `chrome://extensions`, reload LinguaMate, then reload the video tab. Extracting into a different folder does not update Chrome's existing extension path; if you move the extension, select the new folder when loading it. The version is shown on the extension management page.
+
+To back up vocabulary, open the vocabulary notebook and expand the backup and restore section. Export a JSON backup, or select one to preview its record counts before restoring. Merge is the default and preserves the review progress of existing words. Replacement requires confirmation. Use JSON for full migration; CSV and Anki exports are for exchanging learning content.
 
 ### Shortcuts
 
@@ -121,3 +129,13 @@ To update later, download the zip again and unzip it. On `chrome://extensions`, 
 - `storage` saves settings and vocabulary
 - `contextMenus`, `activeTab`, and `scripting` power the page reader
 - YouTube, translation, and dictionary hosts are used to load captions, meanings, and audio
+
+## Local checks / 本地检查
+
+Run the regression tests with Node.js:
+
+```sh
+node --test
+```
+
+Browser integration tests use an installed Chrome in an isolated temporary profile. Set `CHROME_PATH` if Chrome is installed elsewhere; tests that require Chrome are skipped when it is unavailable.

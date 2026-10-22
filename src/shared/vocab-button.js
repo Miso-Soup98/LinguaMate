@@ -3,7 +3,7 @@
 function lmBindVocabButton(button, { word, lang, send, createItem, onChange }) {
   const boundWord = String(word || "").trim();
   const boundLang = String(lang || "und").trim();
-  const normalize = (value) => String(value || "").trim().toLowerCase();
+  const normalize = (value) => String(value || "").normalize("NFC").trim().toLowerCase();
   const status = (button.ownerDocument || document).createElement("div");
   status.className = "lm-vocab-status";
   status.setAttribute("role", "status");
@@ -19,6 +19,7 @@ function lmBindVocabButton(button, { word, lang, send, createItem, onChange }) {
   let pending = Promise.resolve(false);
 
   function report(message, tone = "") {
+    if (typeof lmReportStatus === "function") lmReportStatus(status, message, tone || "success");
     status.textContent = message;
     status.dataset.tone = tone;
     status.dataset.error = String(tone === "error");

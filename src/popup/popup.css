@@ -77,3 +77,11 @@ button {
   cursor: pointer;
   font-weight: 650;
 }
+
+footer { margin-top: 16px; }
+.operation-feedback { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+#operationStatus { margin: 8px 0 0; color: #9fb0bd; }
+#operationStatus[data-tone="success"] { color: #2dd4bf; }
+#operationStatus[data-tone="error"] { color: #fb7185; }
+button:disabled, input:disabled, select:disabled { opacity: 0.55; cursor: wait; }
+[hidden] { display: none !important; }

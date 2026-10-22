@@ -17,15 +17,28 @@ const DEFAULTS = {
 
 const cache = new Map();
 const CACHE_LIMIT = 4000;
+const BACKUP_FORMAT = "linguamate-backup";
+const BACKUP_VERSION = 1;
+let storageTail = Promise.resolve();
+
+// All storage operations share one queue, including reads. Two tabs can never
+// read the same snapshot and then overwrite each other's completed changes.
+function withStorage(operation) {
+  const result = storageTail.then(operation);
+  storageTail = result.catch(() => {});
+  return result;
+}
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const stored = await chrome.storage.sync.get(DEFAULTS);
-  await chrome.storage.sync.set(Object.assign({}, DEFAULTS, stored));
-  const local = await chrome.storage.local.get({ vocab: [], known: {} });
-  if (!Array.isArray(local.vocab)) await chrome.storage.local.set({ vocab: [] });
-  if (!local.known || typeof local.known !== "object") {
-    await chrome.storage.local.set({ known: {} });
-  }
+  await withStorage(async () => {
+    const stored = await getSettings();
+    await chrome.storage.sync.set(stored);
+    const local = await chrome.storage.local.get({ vocab: [], known: {} });
+    const repair = {};
+    if (!Array.isArray(local.vocab)) repair.vocab = [];
+    if (!isRecord(local.known)) repair.known = {};
+    if (Object.keys(repair).length) await chrome.storage.local.set(repair);
+  });
 
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
@@ -55,7 +68,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     });
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["src/shared/languages.js", "src/shared/defaults.js", "src/content/reader.js"]
+      files: ["src/shared/languages.js", "src/shared/defaults.js", "src/shared/feedback.js", "src/content/reader.js"]
     });
     await chrome.tabs.sendMessage(tab.id, {
       type: "LM_READER",
@@ -75,12 +88,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function handleMessage(message) {
+  if (!isRecord(message)) throw new Error("invalid_message");
   switch (message.type) {
     case "LM_GET_SETTINGS":
-      return { ok: true, settings: await getSettings() };
+      return withStorage(async () => ({ ok: true, settings: await getSettings() }));
     case "LM_SET_SETTINGS":
-      await chrome.storage.sync.set(message.settings || {});
-      return { ok: true, settings: await getSettings() };
+      return withStorage(async () => {
+        const settings = validateSettings(message.settings);
+        const previous = await getSettings();
+        await chrome.storage.sync.set(settings);
+        return { ok: true, settings: { ...previous, ...settings } };
+      });
     case "LM_TRANSLATE":
       return {
         ok: true,
@@ -96,17 +114,25 @@ async function handleMessage(message) {
       return { ok: true, audio: clip.audio || "", mime: clip.mime || "audio/mpeg" };
     }
     case "LM_VOCAB_LIST":
-      return { ok: true, vocab: await getVocab(), known: await getKnown() };
+      return withStorage(async () => ({ ok: true, ...await getLearningData() }));
     case "LM_VOCAB_ADD":
-      return { ok: true, item: await addVocab(message.item) };
+      return withStorage(async () => ({ ok: true, item: await addVocab(message.item) }));
     case "LM_VOCAB_UPDATE":
-      return { ok: true, item: await updateVocab(message.id, message.patch) };
+      return withStorage(async () => ({ ok: true, item: await updateVocab(message.id, message.patch) }));
     case "LM_VOCAB_DELETE":
-      await deleteVocab(message.id);
-      return { ok: true };
+      return withStorage(async () => {
+        await deleteVocab(message.id);
+        return { ok: true };
+      });
     case "LM_MARK_KNOWN":
-      await markKnown(message.word, message.lang, message.known !== false);
-      return { ok: true, known: await getKnown() };
+      return withStorage(async () => {
+        if (message.known !== undefined && typeof message.known !== "boolean") throw new Error("invalid_known");
+        return { ok: true, known: await markKnown(message.word, message.lang, message.known !== false) };
+      });
+    case "LM_DATA_EXPORT":
+      return withStorage(async () => ({ ok: true, data: await exportLearningData() }));
+    case "LM_DATA_IMPORT":
+      return withStorage(async () => ({ ok: true, stats: await importLearningData(message.backup, message.mode) }));
     default:
       return { ok: false, error: "unknown_message" };
   }
@@ -114,83 +140,239 @@ async function handleMessage(message) {
 
 async function getSettings() {
   const stored = await chrome.storage.sync.get(DEFAULTS);
-  return Object.assign({}, DEFAULTS, stored);
+  const settings = { ...DEFAULTS };
+  for (const key of Object.keys(DEFAULTS)) {
+    try {
+      Object.assign(settings, validateSettings({ [key]: stored[key] }));
+    } catch (_) {
+      // Old or externally written invalid values use the documented default.
+    }
+  }
+  return settings;
 }
 
-async function getVocab() {
-  const { vocab } = await chrome.storage.local.get({ vocab: [] });
-  return Array.isArray(vocab) ? vocab : [];
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-async function getKnown() {
-  const { known } = await chrome.storage.local.get({ known: {} });
-  return known && typeof known === "object" ? known : {};
+function cleanText(value, field, maxLength, allowEmpty = true) {
+  if (typeof value !== "string" || value.length > maxLength || (!allowEmpty && !value.trim())) {
+    throw new Error(`invalid_${field}`);
+  }
+  return value;
+}
+
+function cleanLang(value, fallback) {
+  if (value === undefined && fallback) return fallback;
+  if (typeof value !== "string" || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(value)) throw new Error("invalid_language");
+  try {
+    return Intl.getCanonicalLocales(value)[0];
+  } catch (_) {
+    throw new Error("invalid_language");
+  }
+}
+
+function validateSettings(input) {
+  if (!isRecord(input)) throw new Error("invalid_settings");
+  const validated = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!Object.hasOwn(DEFAULTS, key)) throw new Error(`unknown_setting:${key}`);
+    if (typeof DEFAULTS[key] === "boolean") {
+      if (typeof value !== "boolean") throw new Error(`invalid_setting:${key}`);
+      validated[key] = value;
+    } else if (key === "fontSize") {
+      if (!Number.isInteger(value) || value < 16 || value > 40) throw new Error(`invalid_setting:${key}`);
+      validated[key] = value;
+    } else if (key === "playbackRate") {
+      if (!Number.isFinite(value) || value < 0.5 || value > 2) throw new Error(`invalid_setting:${key}`);
+      validated[key] = value;
+    } else if (key === "accent") {
+      if (value !== "us" && value !== "uk") throw new Error(`invalid_setting:${key}`);
+      validated[key] = value;
+    } else {
+      validated[key] = cleanLang(value);
+    }
+  }
+  return validated;
+}
+
+async function getLearningData() {
+  const { vocab, known } = await chrome.storage.local.get({ vocab: [], known: {} });
+  if (!Array.isArray(vocab) || !isRecord(known)) throw new Error("invalid_stored_data");
+  return { vocab, known };
 }
 
 function vocabKey(word, lang) {
-  return `${lang || "und"}:${String(word || "").toLowerCase()}`;
+  return `${cleanLang(lang, "en")}:${cleanText(word, "word", 500, false).normalize("NFC").trim().toLowerCase()}`;
+}
+
+const VOCAB_TEXT_FIELDS = { translation: 50000, phonetic: 5000, context: 100000, videoTitle: 5000, videoUrl: 10000 };
+const VOCAB_NUMBER_FIELDS = ["time", "reps", "interval", "ease", "due", "createdAt", "updatedAt"];
+
+function validateVocab(row) {
+  if (!isRecord(row)) throw new Error("invalid_vocab_item");
+  const allowed = new Set(["id", "word", "lang", "nativeLang", "status", ...Object.keys(VOCAB_TEXT_FIELDS), ...VOCAB_NUMBER_FIELDS]);
+  if (Object.keys(row).some((key) => !allowed.has(key))) throw new Error("unknown_vocab_field");
+  const clean = {
+    id: cleanText(row.id, "id", 200, false),
+    word: cleanText(row.word, "word", 500, false).normalize("NFC").trim(),
+    lang: cleanLang(row.lang),
+    nativeLang: cleanLang(row.nativeLang),
+    status: row.status
+  };
+  if (!["learning", "known"].includes(clean.status)) throw new Error("invalid_status");
+  for (const [key, max] of Object.entries(VOCAB_TEXT_FIELDS)) clean[key] = cleanText(row[key], key, max);
+  for (const key of VOCAB_NUMBER_FIELDS) {
+    if (!Number.isFinite(row[key]) || row[key] < 0) throw new Error(`invalid_${key}`);
+    clean[key] = row[key];
+  }
+  if (!Number.isInteger(clean.reps)) throw new Error("invalid_reps");
+  if (clean.ease < 1) throw new Error("invalid_ease");
+  return clean;
+}
+
+function newVocab(item) {
+  if (!isRecord(item)) throw new Error("invalid_vocab_item");
+  const now = Date.now();
+  const created = {
+    id: `${now}-${Math.random().toString(36).slice(2, 10)}`,
+    word: item.word,
+    lang: cleanLang(item.lang, "en"),
+    nativeLang: cleanLang(item.nativeLang, "zh-CN"),
+    status: "learning",
+    time: item.time === undefined ? 0 : item.time,
+    reps: 0,
+    interval: 0,
+    ease: 2.5,
+    due: now,
+    createdAt: now,
+    updatedAt: now
+  };
+  for (const key of Object.keys(VOCAB_TEXT_FIELDS)) created[key] = item[key] === undefined ? "" : item[key];
+  return validateVocab(created);
 }
 
 async function addVocab(item) {
-  const vocab = await getVocab();
-  const word = String(item.word || "").trim();
-  if (!word) throw new Error("empty_word");
-  const existing = vocab.find(
-    (row) => row.word.toLowerCase() === word.toLowerCase() && row.lang === item.lang
-  );
+  const created = newVocab(item);
+  const { vocab, known } = await getLearningData();
+  const key = vocabKey(created.word, created.lang);
+  const existing = vocab.find((row) => vocabKey(row.word, row.lang) === key);
   if (existing) {
-    existing.translation = item.translation || existing.translation;
-    existing.context = item.context || existing.context;
-    existing.videoTitle = item.videoTitle || existing.videoTitle;
-    existing.videoUrl = item.videoUrl || existing.videoUrl;
+    for (const field of ["translation", "phonetic", "context", "videoTitle", "videoUrl"]) {
+      if (created[field]) existing[field] = created[field];
+    }
     existing.updatedAt = Date.now();
     await chrome.storage.local.set({ vocab });
     return existing;
   }
-  const created = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    word,
-    translation: item.translation || "",
-    phonetic: item.phonetic || "",
-    lang: item.lang || "en",
-    nativeLang: item.nativeLang || "zh-CN",
-    context: item.context || "",
-    videoTitle: item.videoTitle || "",
-    videoUrl: item.videoUrl || "",
-    time: item.time || 0,
-    status: "learning",
-    reps: 0,
-    interval: 0,
-    ease: 2.5,
-    due: Date.now(),
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
+  if (known[key]) created.status = "known";
   vocab.unshift(created);
   await chrome.storage.local.set({ vocab });
   return created;
 }
 
 async function updateVocab(id, patch) {
-  const vocab = await getVocab();
-  const row = vocab.find((item) => item.id === id);
+  cleanText(id, "id", 200, false);
+  if (!isRecord(patch) || ["id", "createdAt", "updatedAt"].some((key) => Object.hasOwn(patch, key))) throw new Error("invalid_patch");
+  const { vocab, known } = await getLearningData();
+  const index = vocab.findIndex((item) => item.id === id);
+  const row = vocab[index];
   if (!row) throw new Error("missing_item");
-  Object.assign(row, patch, { updatedAt: Date.now() });
-  await chrome.storage.local.set({ vocab });
-  return row;
+  const updated = validateVocab({ ...row, ...patch, updatedAt: Date.now() });
+  const key = vocabKey(updated.word, updated.lang);
+  if (vocab.some((item, itemIndex) => itemIndex !== index && vocabKey(item.word, item.lang) === key)) throw new Error("duplicate_word");
+  const oldKey = vocabKey(row.word, row.lang);
+  if (oldKey !== key && row.status === "known") delete known[oldKey];
+  if (updated.status === "known") known[key] = true;
+  else delete known[key];
+  vocab[index] = updated;
+  await chrome.storage.local.set({ vocab, known });
+  return updated;
 }
 
 async function deleteVocab(id) {
-  const vocab = await getVocab();
+  cleanText(id, "id", 200, false);
+  const { vocab } = await getLearningData();
   await chrome.storage.local.set({ vocab: vocab.filter((item) => item.id !== id) });
 }
 
 async function markKnown(word, lang, isKnown) {
-  const known = await getKnown();
   const key = vocabKey(word, lang);
+  const { vocab, known } = await getLearningData();
   if (isKnown) known[key] = true;
   else delete known[key];
-  await chrome.storage.local.set({ known });
+  for (const row of vocab) {
+    if (vocabKey(row.word, row.lang) === key) {
+      row.status = isKnown ? "known" : "learning";
+      row.updatedAt = Date.now();
+    }
+  }
+  await chrome.storage.local.set({ vocab, known });
+  return known;
+}
+
+function validateBackup(data) {
+  if (!isRecord(data) || data.format !== BACKUP_FORMAT || data.version !== BACKUP_VERSION ||
+      typeof data.exportedAt !== "string" || !Number.isFinite(Date.parse(data.exportedAt)) ||
+      !Array.isArray(data.vocab) || !isRecord(data.known) || data.vocab.length > 100000 ||
+      Object.keys(data.known).length > 100000 || Object.keys(data).some((key) => !["format", "version", "exportedAt", "vocab", "known"].includes(key))) {
+    throw new Error("invalid_backup");
+  }
+  const vocab = data.vocab.map(validateVocab);
+  const ids = new Set();
+  const keys = new Set();
+  for (const row of vocab) {
+    const key = vocabKey(row.word, row.lang);
+    if (ids.has(row.id) || keys.has(key)) throw new Error("duplicate_backup_item");
+    ids.add(row.id);
+    keys.add(key);
+  }
+  const known = {};
+  for (const [key, value] of Object.entries(data.known)) {
+    const colon = key.indexOf(":");
+    if (value !== true || colon < 1) throw new Error("invalid_backup_known");
+    known[vocabKey(key.slice(colon + 1), key.slice(0, colon))] = true;
+  }
+  for (const row of vocab) {
+    const key = vocabKey(row.word, row.lang);
+    if (row.status === "known") known[key] = true;
+    else if (known[key]) row.status = "known";
+  }
+  return { vocab, known };
+}
+
+async function exportLearningData() {
+  const { vocab, known } = await getLearningData();
+  return { format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), vocab, known };
+}
+
+async function importLearningData(backup, mode) {
+  if (mode !== "merge" && mode !== "replace") throw new Error("invalid_import_mode");
+  const imported = validateBackup(backup);
+  let { vocab, known } = imported;
+  if (mode === "merge") {
+    const current = await getLearningData();
+    const currentKeys = new Set(current.vocab.map((row) => vocabKey(row.word, row.lang)));
+    const ids = new Set(current.vocab.map((row) => row.id));
+    const added = imported.vocab.filter((row) => !currentKeys.has(vocabKey(row.word, row.lang)));
+    for (const row of added) {
+      if (ids.has(row.id)) row.id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      ids.add(row.id);
+    }
+    vocab = [...current.vocab, ...added];
+    known = { ...imported.known, ...current.known };
+    // Existing cards retain their current status and review schedule on merge.
+    for (const row of current.vocab) {
+      const key = vocabKey(row.word, row.lang);
+      if (row.status === "known") known[key] = true;
+      else delete known[key];
+    }
+    for (const row of added) {
+      if (known[vocabKey(row.word, row.lang)]) row.status = "known";
+    }
+  }
+  await chrome.storage.local.set({ vocab, known });
+  return { vocabCount: vocab.length, knownCount: Object.keys(known).length, mode };
 }
 
 function cacheGet(key) {

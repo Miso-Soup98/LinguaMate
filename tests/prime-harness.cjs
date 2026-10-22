@@ -63,6 +63,8 @@ class Element extends Events {
   get isConnected() { return this === this.ownerDocument.documentElement || !!this.parentElement?.isConnected; }
   set textContent(value) { this.replaceChildren(); this._text = String(value ?? ""); }
   get textContent() { return this._text + this.children.map((node) => node.textContent).join(""); }
+  set innerText(value) { this.textContent = value; }
+  get innerText() { return this.textContent; }
   set innerHTML(html) {
     this.replaceChildren();
     const stack = [this];
@@ -117,12 +119,13 @@ class Element extends Events {
   matches(selector) {
     if (selector.includes(",")) return selector.split(",").some((part) => this.matches(part.trim()));
     if (selector === ":hover") return this.hovered;
+    if (selector.endsWith(":hover")) return this.hovered && this.matches(selector.slice(0, -6));
     if (selector.startsWith("#")) return this.id === selector.slice(1);
     if (selector.startsWith(".")) return selector.slice(1).split(".").every((name) => this.classList.contains(name));
-    const attr = selector.match(/^\[([\w-]+)(?:=['"]?([^'"\]]+)['"]?)?\]$/);
+    const attr = selector.match(/^\[([\w-]+)(?:(\*?=)['"]?([^'"\]]+)['"]?)?\]$/);
     if (attr) {
-      const value = attr[1].startsWith("data-") ? this.dataset[attr[1].slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] : this.getAttribute(attr[1]);
-      return value != null && (attr[2] === undefined || value === attr[2]);
+      const value = attr[1] === "class" ? this.className : attr[1].startsWith("data-") ? this.dataset[attr[1].slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] : this.getAttribute(attr[1]);
+      return value != null && (attr[2] === undefined || (attr[2] === "*=" ? value.includes(attr[3]) : value === attr[3]));
     }
     return this.localName === selector;
   }
@@ -158,7 +161,7 @@ class Element extends Events {
   releasePointerCapture() {}
 }
 
-function primeHarness({ deferredLookup = false, initialVocab = [], vocabErrors = {} } = {}) {
+function primeHarness({ deferredLookup = false, deferredTranslation = false, deferredSettings = false, initialVocab = [], vocabErrors = {}, settings = {}, textTracks = [] } = {}) {
   const document = new Events();
   document.createElement = (tag) => new Element(tag, document);
   document.createTextNode = (text) => { const node = new Element("#text", document, 3); node._text = text; return node; };
@@ -166,19 +169,26 @@ function primeHarness({ deferredLookup = false, initialVocab = [], vocabErrors =
   document.documentElement = document.createElement("html");
   document.querySelectorAll = (selector) => document.documentElement.querySelectorAll(selector);
   document.querySelector = (selector) => document.documentElement.querySelector(selector);
+  document.getElementById = (id) => document.querySelector(`#${id}`);
   document.title = "Prime regression fixture";
   const video = document.createElement("video");
   video.clientWidth = 1000;
   video.clientHeight = 600;
   video.currentTime = 0;
-  video.textTracks = [];
-  video.play = () => Promise.resolve();
-  video.pause = () => {};
+  video.textTracks = textTracks;
+  video.paused = false;
+  video.seeking = false;
+  video.playbackRate = 1;
+  video.playCalls = 0;
+  video.pauseCalls = 0;
+  video.play = () => { video.paused = false; video.playCalls += 1; return Promise.resolve(); };
+  video.pause = () => { video.paused = true; video.pauseCalls += 1; };
   document.documentElement.append(video);
   const window = new Events();
   window.innerWidth = 1440;
   window.innerHeight = 900;
-  window.postMessage = () => {};
+  const postedMessages = [];
+  window.postMessage = (message, origin) => postedMessages.push({ message, origin });
   const timers = new Map();
   let now = 0;
   let timerId = 0;
@@ -186,6 +196,9 @@ function primeHarness({ deferredLookup = false, initialVocab = [], vocabErrors =
   const clearTimeout = (id) => timers.delete(id);
   const requests = [];
   const pendingLookups = [];
+  const pendingTranslations = [];
+  const pendingSettings = [];
+  let backendSettings = { ...settings };
   const vocab = initialVocab.map((item) => ({ ...item }));
   const storageListeners = [];
   let vocabId = 0;
@@ -196,9 +209,18 @@ function primeHarness({ deferredLookup = false, initialVocab = [], vocabErrors =
         requests.push(message);
         if (message.type === "LM_LOOKUP") {
           if (deferredLookup) pendingLookups.push({ message, callback });
-          else callback({ result: { word: message.word, translation: `translation:${message.word}` } });
+          else callback({ ok: true, result: { word: message.word, translation: `translation:${message.word}` } });
         } else if (vocabErrors[message.type]) {
           callback({ ok: false, error: vocabErrors[message.type] });
+        } else if (message.type === "LM_GET_SETTINGS") {
+          if (deferredSettings) pendingSettings.push({ message, callback });
+          else callback({ ok: true, settings: { ...backendSettings } });
+        } else if (message.type === "LM_SET_SETTINGS") {
+          backendSettings = { ...backendSettings, ...message.settings };
+          callback({ ok: true, settings: { ...backendSettings } });
+        } else if (message.type === "LM_TRANSLATE") {
+          if (deferredTranslation) pendingTranslations.push({ message, callback });
+          else callback({ ok: true, result: { text: message.text.split("\n").map((line) => line.replace(/^(\[\d+\])\s*/, "$1 translated:")).join("\n") } });
         } else if (message.type === "LM_VOCAB_LIST") {
           callback({ ok: true, vocab: vocab.map((item) => ({ ...item })), known: {} });
         } else if (message.type === "LM_VOCAB_ADD") {
@@ -212,7 +234,7 @@ function primeHarness({ deferredLookup = false, initialVocab = [], vocabErrors =
           const index = vocab.findIndex((item) => item.id === message.id);
           if (index !== -1) vocab.splice(index, 1);
           callback({ ok: true });
-        } else callback({});
+        } else callback({ ok: true });
       }
     },
     storage: {
@@ -227,21 +249,26 @@ function primeHarness({ deferredLookup = false, initialVocab = [], vocabErrors =
     document, window, chrome, Intl, URL, Blob, console,
     location: { href: "https://www.primevideo.com/detail/fixture" },
     setTimeout, clearTimeout, setInterval: () => 0,
-    requestAnimationFrame: (fn) => setTimeout(fn, 16), cancelAnimationFrame: clearTimeout,
-    lmMergeSettings: (settings) => ({ learningLang: "en", nativeLang: "zh-CN", fontSize: 22, nativeInteractive: false, ...settings })
+    requestAnimationFrame: (fn) => setTimeout(fn, 16), cancelAnimationFrame: clearTimeout
   });
   const file = path.resolve(__dirname, "../src/content/prime.js");
-  const vocabHelper = path.resolve(__dirname, "../src/shared/vocab-button.js");
-  vm.runInContext(fs.readFileSync(vocabHelper, "utf8"), context, { filename: vocabHelper });
-  const exports = ["state", "ui", "ensureUi", "mount", "renderCurrent", "renderPanel", "renderWords", "scrapeLiveCaption", "seekTo", "applyTrack", "onHover", "onLeave", "hideDict", "togglePanel", "setTranscriptFollow", "followCurrentCue", "onTranscriptScroll", "onDictViewportChange"];
+  for (const name of ["defaults.js", "frequency.js", "captions.js", "feedback.js", "vocab-button.js"]) {
+    const helper = path.resolve(__dirname, "../src/shared", name);
+    vm.runInContext(fs.readFileSync(helper, "utf8"), context, { filename: helper });
+  }
+  const exports = ["state", "ui", "ensureUi", "mount", "renderCurrent", "renderPanel", "renderWords", "scrapeLiveCaption", "seekTo", "applyTrack", "onHover", "onLeave", "hideDict", "togglePanel", "setTranscriptFollow", "followCurrentCue", "onTranscriptScroll", "onDictViewportChange", "applySettings", "syncSettings", "currentIndex", "navigationIndex", "onTick", "onKeyDown", "onKeyUp", "translateCues", "syncTextTracks"];
   const source = fs.readFileSync(file, "utf8").replace(/\s+boot\(\);\s*\}\)\(\);\s*$/, `\n globalThis.prime = { ${exports.map((name) => `${name}: typeof ${name} === 'undefined' ? undefined : ${name}`).join(",")} };\n})();`);
   vm.runInContext(source, context, { filename: file });
   if (!context.prime) throw new Error("Prime test harness could not export content-script functions");
   const prime = context.prime;
+  prime.state.settings = context.lmMergeSettings(settings);
+  prime.state.vocab = vocab.map((item) => ({ ...item }));
   prime.mount();
   return {
-    prime, video, document, window, requests, pendingLookups, vocab, vocabErrors,
-    storageChange(changes, area = "local") { storageListeners.forEach((listener) => listener(changes, area)); },
+    prime, video, document, window, requests, pendingLookups, pendingTranslations, pendingSettings, postedMessages, vocab, vocabErrors,
+    setBackendSettings(value) { backendSettings = { ...backendSettings, ...value }; },
+    storageChange(changes, area = "local") { return Promise.all(storageListeners.map((listener) => listener(changes, area))); },
+    key(type, key, options = {}) { return document.emit(type, { key, target: document.documentElement, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...options }); },
     advance(ms) {
       const until = now + ms;
       for (;;) {
