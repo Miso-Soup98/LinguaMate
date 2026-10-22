@@ -136,7 +136,7 @@
       target.textContent = text || "";
       return;
     }
-    const saved = new Set(state.vocab.map((item) => item.word.toLowerCase()));
+    const saved = new Set(state.vocab.filter((item) => item.lang === lang).map((item) => item.word.trim().toLowerCase()));
     for (const token of tokenize(text, lang)) {
       if (!token.word) {
         target.appendChild(document.createTextNode(token.text));
@@ -1000,7 +1000,29 @@
       toast("已标记为认识");
       renderCurrent();
     });
-    ui.dict.querySelector(".lm-dict-save").addEventListener("click", () => saveWord(data.word, cue?.text, data));
+    ui.vocabButton = lmBindVocabButton(ui.dict.querySelector(".lm-dict-save"), {
+      word: data.word,
+      lang: from,
+      send,
+      createItem: () => ({
+        word: data.word,
+        translation: data.translation || "",
+        phonetic: data.phonetic || "",
+        lang: from,
+        nativeLang: state.settings.nativeLang,
+        context: cue?.text || "",
+        videoTitle: state.title,
+        videoUrl: location.href,
+        time: videoEl()?.currentTime || 0
+      }),
+      onChange: ({ saved, item }) => {
+        state.vocab = state.vocab.filter((row) => row.lang !== from || row.word.trim().toLowerCase() !== data.word.trim().toLowerCase());
+        if (saved) state.vocab.unshift(item);
+        syncWordMarkers();
+        if (state.tab !== "subs") renderPanel();
+        if (hoverWord?.isConnected) placeDict(hoverWord);
+      }
+    });
     if (hoverWord && hoverWord.isConnected) placeDict(hoverWord);
   }
 
@@ -1146,6 +1168,19 @@
     scheduleHide();
   }
 
+  function syncWordMarkers() {
+    const saved = new Set(state.vocab.map((item) => `${item.lang}:${item.word.trim().toLowerCase()}`));
+    for (const root of [ui.subs, ui.panel]) {
+      root?.querySelectorAll(".lm-word").forEach((word) => {
+        const lang = word.dataset.lang;
+        const isSaved = saved.has(`${lang}:${word.dataset.word.trim().toLowerCase()}`);
+        word.classList.toggle("lm-saved", isSaved);
+        word.classList.toggle("lm-rare", !isSaved && state.settings.highlightRare && !lmIsCommonWord(word.dataset.word, lang));
+        word.classList.toggle("lm-known", !!state.known[`${lang}:${lmNormalizeWord(word.dataset.word)}`]);
+      });
+    }
+  }
+
   async function saveWord(word, context, lookup) {
     const cue = state.cues[state.index];
     let data = lookup;
@@ -1176,7 +1211,7 @@
       if (idx >= 0) state.vocab[idx] = saved.item;
       else state.vocab.unshift(saved.item);
       toast(`已收藏 ${word}`);
-      renderCurrent();
+      syncWordMarkers();
       if (state.tab !== "subs") renderPanel();
     }
   }
@@ -1262,7 +1297,11 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "sync" && changes) refreshStore().then(() => syncToolbar());
-    if (area === "local") refreshStore().then(() => renderPanel());
+    if (area === "local") refreshStore().then(() => {
+      syncWordMarkers();
+      if (state.tab !== "subs") renderPanel();
+      if (changes.vocab) ui.vocabButton?.refresh();
+    });
   });
 
   document.addEventListener("yt-navigate-finish", () => mountUi());

@@ -240,3 +240,114 @@ test("scroll and resize close cards anchored to moving content", async () => {
   h.window.emit("resize");
   assert.equal(h.prime.ui.dict.classList.contains("lm-hidden"), true);
 });
+
+test("the Prime dictionary button adds and removes its word with confirmed feedback", async () => {
+  const h = primeHarness();
+  h.cues();
+  const word = h.prime.ui.learningLine.querySelector(".lm-word");
+  h.hover(word);
+  h.advance(300);
+  await h.flush();
+  const button = h.prime.ui.dict.querySelector(".lm-dict-save");
+  assert.equal(button.dataset.vocabState, "unsaved");
+  assert.equal(button.getAttribute("aria-pressed"), "false");
+  assert.equal(button.textContent, "加入生词本");
+
+  button.click();
+  assert.equal(button.disabled, true, "the operation must prevent repeated clicks while awaiting storage");
+  await h.flush();
+  assert.equal(button.disabled, false);
+  assert.equal(button.dataset.vocabState, "saved");
+  assert.equal(button.getAttribute("aria-pressed"), "true");
+  assert.match(button.textContent, /已加入生词本/);
+  assert.equal(h.prime.ui.dict.querySelector(".lm-vocab-status").textContent, "已加入生词本");
+  assert.equal(h.vocab.length, 1);
+  assert.equal(h.vocab[0].word, word.dataset.word);
+  assert.equal(h.vocab[0].lang, "en");
+  assert.equal(h.vocab[0].context, "Sentence 0 with words");
+  const savedId = h.vocab[0].id;
+
+  button.click();
+  assert.equal(button.disabled, true);
+  await h.flush();
+  assert.equal(button.dataset.vocabState, "unsaved");
+  assert.equal(button.getAttribute("aria-pressed"), "false");
+  assert.equal(button.textContent, "加入生词本");
+  assert.equal(h.prime.ui.dict.querySelector(".lm-vocab-status").textContent, "已从生词本移除");
+  assert.equal(h.vocab.length, 0);
+  const deletion = h.requests.find((message) => message.type === "LM_VOCAB_DELETE");
+  assert.equal(deletion.id, savedId);
+});
+
+test("opening an already saved Prime word shows the saved state and removes its existing id", async () => {
+  const h = primeHarness({ initialVocab: [
+    { id: "existing-en-word", word: "SENTENCE", lang: "en" },
+    { id: "other-language-word", word: "Sentence", lang: "fr" }
+  ] });
+  h.cues();
+  h.hover(h.prime.ui.learningLine.querySelector(".lm-word"));
+  h.advance(300);
+  await h.flush();
+  const button = h.prime.ui.dict.querySelector(".lm-dict-save");
+  assert.equal(button.dataset.vocabState, "saved");
+  assert.equal(button.getAttribute("aria-pressed"), "true");
+  assert.match(button.textContent, /已加入生词本/);
+  assert.equal(h.requests.filter((message) => message.type === "LM_VOCAB_ADD").length, 0);
+  button.click();
+  await h.flush();
+  assert.equal(button.dataset.vocabState, "unsaved");
+  assert.equal(h.vocab.length, 1);
+  assert.equal(h.vocab[0].id, "other-language-word");
+  assert.equal(h.requests.find((message) => message.type === "LM_VOCAB_DELETE").id, "existing-en-word");
+});
+
+test("failed Prime vocabulary writes show an error without claiming success or changing the saved state", async () => {
+  const h = primeHarness({ vocabErrors: { LM_VOCAB_ADD: "storage unavailable" } });
+  h.cues();
+  h.hover(h.prime.ui.learningLine.querySelector(".lm-word"));
+  h.advance(300);
+  await h.flush();
+  const button = h.prime.ui.dict.querySelector(".lm-dict-save");
+  button.click();
+  await h.flush();
+  assert.equal(button.disabled, false);
+  assert.equal(button.getAttribute("aria-pressed"), "false");
+  assert.equal(h.vocab.length, 0);
+  assert.equal(h.prime.ui.dict.querySelector(".lm-vocab-status").textContent, "操作失败，请重试");
+  assert.doesNotMatch(button.textContent, /已加入/);
+
+  delete h.vocabErrors.LM_VOCAB_ADD;
+  button.click();
+  await h.flush();
+  assert.equal(button.dataset.vocabState, "saved");
+  assert.equal(h.vocab.length, 1);
+  h.vocabErrors.LM_VOCAB_DELETE = "storage unavailable";
+  button.click();
+  await h.flush();
+  assert.equal(button.disabled, false);
+  assert.equal(button.getAttribute("aria-pressed"), "true");
+  assert.equal(h.vocab.length, 1);
+  assert.equal(h.prime.ui.dict.querySelector(".lm-vocab-status").textContent, "操作失败，请重试");
+  assert.match(button.textContent, /已加入生词本/);
+});
+
+test("a failed vocabulary read requires a successful retry before Prime can change storage", async () => {
+  const h = primeHarness({ vocabErrors: { LM_VOCAB_LIST: "storage unavailable" } });
+  h.cues();
+  h.hover(h.prime.ui.learningLine.querySelector(".lm-word"));
+  h.advance(300);
+  await h.flush();
+  const button = h.prime.ui.dict.querySelector(".lm-dict-save");
+  assert.equal(button.dataset.vocabState, "error");
+  assert.equal(button.textContent, "重试读取生词本");
+  button.click();
+  await h.flush();
+  assert.equal(button.dataset.vocabState, "error");
+  assert.equal(h.requests.filter((message) => ["LM_VOCAB_ADD", "LM_VOCAB_DELETE"].includes(message.type)).length, 0);
+  assert.equal(h.vocab.length, 0);
+  delete h.vocabErrors.LM_VOCAB_LIST;
+  button.click();
+  await h.flush();
+  assert.equal(button.dataset.vocabState, "unsaved");
+  assert.equal(h.vocab.length, 0, "retrying the read must not accidentally add a word");
+});

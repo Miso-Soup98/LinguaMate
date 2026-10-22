@@ -84,6 +84,10 @@ class Element extends Events {
     if (name.startsWith("data-")) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = String(value);
   }
   getAttribute(name) { return this.attributes[name] ?? null; }
+  removeAttribute(name) {
+    delete this.attributes[name];
+    if (name.startsWith("data-")) delete this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())];
+  }
   appendChild(node) {
     if (node.nodeType === 11) { for (const child of [...node.children]) this.appendChild(child); return node; }
     node.parentElement?.removeChild(node);
@@ -92,6 +96,14 @@ class Element extends Events {
     return node;
   }
   append(...nodes) { nodes.forEach((node) => this.appendChild(node)); }
+  after(node) {
+    if (!this.parentElement) return;
+    node.parentElement?.removeChild(node);
+    const parent = this.parentElement;
+    node.parentElement = parent;
+    parent.children.splice(parent.children.indexOf(this) + 1, 0, node);
+  }
+  click() { if (!this.disabled) this.emit("click"); }
   removeChild(node) { this.children.splice(this.children.indexOf(node), 1); node.parentElement = null; return node; }
   remove() { this.parentElement?.removeChild(this); }
   replaceChildren(...nodes) {
@@ -146,7 +158,7 @@ class Element extends Events {
   releasePointerCapture() {}
 }
 
-function primeHarness({ deferredLookup = false } = {}) {
+function primeHarness({ deferredLookup = false, initialVocab = [], vocabErrors = {} } = {}) {
   const document = new Events();
   document.createElement = (tag) => new Element(tag, document);
   document.createTextNode = (text) => { const node = new Element("#text", document, 3); node._text = text; return node; };
@@ -174,6 +186,9 @@ function primeHarness({ deferredLookup = false } = {}) {
   const clearTimeout = (id) => timers.delete(id);
   const requests = [];
   const pendingLookups = [];
+  const vocab = initialVocab.map((item) => ({ ...item }));
+  const storageListeners = [];
+  let vocabId = 0;
   const chrome = {
     runtime: {
       id: "prime-test",
@@ -182,10 +197,31 @@ function primeHarness({ deferredLookup = false } = {}) {
         if (message.type === "LM_LOOKUP") {
           if (deferredLookup) pendingLookups.push({ message, callback });
           else callback({ result: { word: message.word, translation: `translation:${message.word}` } });
+        } else if (vocabErrors[message.type]) {
+          callback({ ok: false, error: vocabErrors[message.type] });
+        } else if (message.type === "LM_VOCAB_LIST") {
+          callback({ ok: true, vocab: vocab.map((item) => ({ ...item })), known: {} });
+        } else if (message.type === "LM_VOCAB_ADD") {
+          const item = message.item;
+          const existing = vocab.find((entry) => entry.lang === item.lang && entry.word.toLowerCase() === item.word.trim().toLowerCase());
+          const saved = existing || { ...item, id: `fixture-vocab-${++vocabId}`, word: item.word.trim(), status: "learning" };
+          if (existing) Object.assign(existing, item);
+          else vocab.unshift(saved);
+          callback({ ok: true, item: { ...saved } });
+        } else if (message.type === "LM_VOCAB_DELETE") {
+          const index = vocab.findIndex((item) => item.id === message.id);
+          if (index !== -1) vocab.splice(index, 1);
+          callback({ ok: true });
         } else callback({});
       }
     },
-    storage: { local: { get(_key, callback) { callback({}); }, set() {} } }
+    storage: {
+      local: { get(_key, callback) { callback({}); }, set() {} },
+      onChanged: {
+        addListener(listener) { storageListeners.push(listener); },
+        removeListener(listener) { const index = storageListeners.indexOf(listener); if (index !== -1) storageListeners.splice(index, 1); }
+      }
+    }
   };
   const context = vm.createContext({
     document, window, chrome, Intl, URL, Blob, console,
@@ -195,6 +231,8 @@ function primeHarness({ deferredLookup = false } = {}) {
     lmMergeSettings: (settings) => ({ learningLang: "en", nativeLang: "zh-CN", fontSize: 22, nativeInteractive: false, ...settings })
   });
   const file = path.resolve(__dirname, "../src/content/prime.js");
+  const vocabHelper = path.resolve(__dirname, "../src/shared/vocab-button.js");
+  vm.runInContext(fs.readFileSync(vocabHelper, "utf8"), context, { filename: vocabHelper });
   const exports = ["state", "ui", "ensureUi", "mount", "renderCurrent", "renderPanel", "renderWords", "scrapeLiveCaption", "seekTo", "applyTrack", "onHover", "onLeave", "hideDict", "togglePanel", "setTranscriptFollow", "followCurrentCue", "onTranscriptScroll", "onDictViewportChange"];
   const source = fs.readFileSync(file, "utf8").replace(/\s+boot\(\);\s*\}\)\(\);\s*$/, `\n globalThis.prime = { ${exports.map((name) => `${name}: typeof ${name} === 'undefined' ? undefined : ${name}`).join(",")} };\n})();`);
   vm.runInContext(source, context, { filename: file });
@@ -202,7 +240,8 @@ function primeHarness({ deferredLookup = false } = {}) {
   const prime = context.prime;
   prime.mount();
   return {
-    prime, video, document, window, requests, pendingLookups,
+    prime, video, document, window, requests, pendingLookups, vocab, vocabErrors,
+    storageChange(changes, area = "local") { storageListeners.forEach((listener) => listener(changes, area)); },
     advance(ms) {
       const until = now + ms;
       for (;;) {
@@ -225,7 +264,7 @@ function primeHarness({ deferredLookup = false } = {}) {
       prime.renderCurrent();
       return prime.ui.panelBody.querySelectorAll(".lm-cue");
     },
-    async flush() { await Promise.resolve(); await Promise.resolve(); }
+    async flush() { for (let turn = 0; turn < 12; turn += 1) await Promise.resolve(); }
   };
 }
 

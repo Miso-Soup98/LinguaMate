@@ -592,7 +592,25 @@
         new Audio(URL.createObjectURL(new Blob([bytes], { type: clip.mime || "audio/mpeg" }))).play();
       }));
     });
-    ui.dict.querySelector(".lm-dict-save").addEventListener("click", () => saveWord(word, cue?.text, data));
+    ui.vocabButton = lmBindVocabButton(ui.dict.querySelector(".lm-dict-save"), {
+      word,
+      lang: from,
+      send,
+      createItem: () => ({
+        word,
+        translation: data.translation || "",
+        phonetic: data.phonetic || "",
+        lang: from,
+        nativeLang: state.settings.nativeLang,
+        context: cue?.text || "",
+        videoTitle: document.title,
+        videoUrl: location.href,
+        time: videoEl()?.currentTime || 0
+      }),
+      onChange: () => {
+        if (hoverWord?.isConnected && dictOpen()) placeDict(hoverWord);
+      }
+    });
     placeDict(wordEl);
   }
 
@@ -708,6 +726,10 @@
       mount();
       applyTrack(msg.text);
     }
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.vocab) ui.vocabButton?.refresh();
   });
 
   async function boot() {

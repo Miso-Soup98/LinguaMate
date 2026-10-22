@@ -12,6 +12,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 优先使用视频自带字幕；没有对应语言时，用 YouTube 翻译轨道生成译文
 - 鼠标悬停单词即可查词，卡片包含音标、美式 / 英式朗读、词性、释义和例句
 - 右键单词直接加入生词本
+- 单词卡显示收藏状态：点击加入生词本，再次点击移除，并显示操作结果
 - 听写模式：字幕默认隐藏，鼠标悬停才显示
 - 逐句暂停，以及 A / S / D 上一句、重播、下一句（按住可预览）
 - 右侧字幕列表会随页面滚动，不挡住推荐视频
@@ -70,6 +71,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Prefers captions that come with the video, and falls back to YouTube's translated track
 - Hover a word for a dictionary card with IPA, American and British audio, part of speech, definitions, and examples
 - Right-click a word to save it
+- Dictionary cards show saved status: click to add a word, click again to remove it, with confirmation after each action
 - Listening mode hides subtitles until you hover
 - Auto-pause after each line, plus A / S / D for previous, replay, and next (hold to peek)
 - The transcript sidebar scrolls with the page, so recommended videos stay clickable
