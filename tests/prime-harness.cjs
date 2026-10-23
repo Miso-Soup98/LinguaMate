@@ -175,6 +175,8 @@ function primeHarness({ deferredLookup = false, deferredTranslation = false, def
   video.clientWidth = 1000;
   video.clientHeight = 600;
   video.currentTime = 0;
+  video.currentSrc = "blob:programme";
+  video.duration = 3600;
   video.textTracks = textTracks;
   video.paused = false;
   video.seeking = false;
@@ -248,17 +250,19 @@ function primeHarness({ deferredLookup = false, deferredTranslation = false, def
     }
   };
   const context = vm.createContext({
-    document, window, chrome, Intl, URL, Blob, console,
+    document, window, chrome, Intl, URL, Blob, console, queueMicrotask,
+    performance: { now: () => now },
+    getComputedStyle: (node) => ({ display: "block", visibility: "visible", opacity: "1", ...node.style }),
     location: { href: "https://www.primevideo.com/detail/fixture" },
     setTimeout, clearTimeout, setInterval: () => 0,
     requestAnimationFrame: (fn) => setTimeout(fn, 16), cancelAnimationFrame: clearTimeout
   });
   const file = path.resolve(__dirname, "../src/content/prime.js");
-  for (const name of ["defaults.js", "frequency.js", "captions.js", "feedback.js", "japanese.js", "japanese-ui.js", "japanese-client.js", "vocab-button.js"]) {
+  for (const name of ["defaults.js", "frequency.js", "captions.js", "feedback.js", "japanese.js", "japanese-ui.js", "japanese-client.js", "vocab-button.js", "prime-manifest.js", "prime-timeline.js"]) {
     const helper = path.resolve(__dirname, "../src/shared", name);
     vm.runInContext(fs.readFileSync(helper, "utf8"), context, { filename: helper });
   }
-  const exports = ["state", "ui", "ensureUi", "mount", "renderCurrent", "renderPanel", "renderWords", "scrapeLiveCaption", "seekTo", "applyTrack", "onHover", "onLeave", "hideDict", "togglePanel", "setTranscriptFollow", "followCurrentCue", "onTranscriptScroll", "onDictViewportChange", "applySettings", "syncSettings", "currentIndex", "navigationIndex", "onTick", "onKeyDown", "onKeyUp", "translateCues", "syncTextTracks", "showDict", "saveWord", "isSavedJapanese", "onPhraseSelection", "syncWordMarkers"];
+  const exports = ["state", "ui", "ensureUi", "mount", "renderCurrent", "renderPanel", "renderWords", "scrapeLiveCaption", "seekTo", "applyTrack", "onHover", "onLeave", "hideDict", "togglePanel", "setTranscriptFollow", "followCurrentCue", "onTranscriptScroll", "onDictViewportChange", "applySettings", "syncSettings", "currentIndex", "navigationIndex", "onTick", "onKeyDown", "onKeyUp", "translateCues", "syncTextTracks", "showDict", "saveWord", "isSavedJapanese", "onPhraseSelection", "syncWordMarkers", "playback", "contentTimeMs", "subtitleTimeMs", "hasAdIndicator", "videoEl", "checkPlaybackSession"];
   const source = fs.readFileSync(file, "utf8").replace(/\s+boot\(\);\s*\}\)\(\);\s*$/, `\n globalThis.prime = { ${exports.map((name) => `${name}: typeof ${name} === 'undefined' ? undefined : ${name}`).join(",")} };\n})();`);
   vm.runInContext(source, context, { filename: file });
   if (!context.prime) throw new Error("Prime test harness could not export content-script functions");

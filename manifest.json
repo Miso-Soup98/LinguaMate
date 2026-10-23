@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "default_locale": "zh_CN",
   "action": {
     "default_title": "__MSG_extName__",
@@ -61,7 +61,7 @@
         "https://*.amazon.com.br/gp/video/*",
         "https://*.amazon.sg/gp/video/*"
       ],
-      "js": ["src/injected/prime.js"],
+      "js": ["src/shared/prime-manifest.js", "src/injected/prime.js"],
       "world": "MAIN",
       "run_at": "document_start"
     },
@@ -114,6 +114,8 @@
         "src/shared/japanese-ui.js",
         "src/shared/japanese-client.js",
         "src/shared/vocab-button.js",
+        "src/shared/prime-manifest.js",
+        "src/shared/prime-timeline.js",
         "src/content/prime.js"
       ],
       "css": ["src/content/youtube.css", "src/content/prime.css"],

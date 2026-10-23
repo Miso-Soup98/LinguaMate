@@ -155,7 +155,7 @@ test("Prime Japanese word cards, saved forms and explicit phrase queries work in
   `;
   const screenshotSetup = process.env.LM_PRIME_JA_SCREENSHOT ? `p.applySettings({...p.state.settings,japaneseFurigana:'all'});await settle();await new Promise(resolve=>setTimeout(resolve,600));await p.showDict(p.ui.learningLine.querySelector('.lm-word'));await p.ui.vocabButton.ready;` : "";
   const finish = `(async()=>{try{${checks}${screenshotSetup}document.title='LM_PRIME_JAPANESE:ok';}catch(error){document.title='LM_PRIME_JAPANESE:'+btoa(unescape(encodeURIComponent(error.stack)));}})();`;
-  const scripts = [bridge, ...["defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button"].map((name) => source(`src/shared/${name}.js`)), content, finish];
+  const scripts = [bridge, ...["defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button", "prime-manifest", "prime-timeline"].map((name) => source(`src/shared/${name}.js`)), content, finish];
   const file = path.join(directory, "prime.html");
   fs.writeFileSync(file, `<!doctype html><meta charset="utf-8"><title>pending</title><style>body{margin:0;background:#111}video{width:800px;height:450px}${source("src/content/youtube.css")}${source("src/content/prime.css")}</style><video></video>${scripts.map((script) => `<script>${script.replace(/<\/script/gi, "<\\/script")}</script>`).join("")}`, "utf8");
   try {

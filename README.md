@@ -18,6 +18,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 逐句暂停，以及 A / S / D 上一句、重播、下一句（按住可预览）
 - 右侧字幕列表会随页面滚动，不挡住推荐视频
 - Prime Video 字幕栏保持固定高度并自动跟随当前字幕；向上滚动可暂停，点击「继续跟随」恢复
+- Prime Video 插播广告时暂停正片字幕与跟随，保留已加载列表；广告后恢复正片时间，字幕跳转和收藏时间也会换算（1.9.1）
 - Prime Video 查词需短暂停留，快速划过单词不会反复闪卡
 - 打开或关闭播放器 CC 时自动重新读取字幕
 - 生词本、间隔重复闪卡，可导出 CSV / Anki
@@ -93,6 +94,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Auto-pause after each line, plus A / S / D for previous, replay, and next (hold to peek)
 - The transcript sidebar scrolls with the page, so recommended videos stay clickable
 - Prime Video's fixed-height transcript follows the current subtitle; scroll up to pause following and click the follow button to resume
+- During Prime Video ads, programme subtitles and transcript following pause; the content timeline, subtitle seeks and vocabulary timestamps resume together afterward (1.9.1)
 - Prime Video dictionary cards wait for a brief hover, so passing over words does not flash cards
 - Reloads captions when you turn the player's captions on or off
 - Japanese uses bundled offline morphology, dictionary forms, kana readings and optional furigana on both video platforms and in the page reader; explicit range lookup keeps a whole phrase together

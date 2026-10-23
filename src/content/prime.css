@@ -3,6 +3,20 @@ html.lm-prime-captions .atvwebplayersdk-captions-overlay {
   pointer-events: none !important;
 }
 
+.lm-prime-ad-status {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--lm-gold);
+  border-bottom: 1px solid var(--lm-line);
+}
+
+.lm-prime-ad-status[hidden],
+.lm-prime-panel.lm-collapsed .lm-prime-ad-status { display: none; }
+
+.lm-prime-ad-playing .lm-cue { cursor: default; }
+
 #lm-root.lm-prime-root {
   position: fixed;
   z-index: 2147482000;

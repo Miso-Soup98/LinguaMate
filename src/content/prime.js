@@ -15,6 +15,8 @@
     known: {},
     token: 0,
     fullTrack: false,
+    trackClock: "content",
+    adActive: false,
     followTranscript: true,
     statusText: "正在等待播放器提供字幕…"
   };
@@ -24,13 +26,157 @@
   let hoverWord = null;
   let hoverTimer = 0;
   let lookupToken = 0;
+  const playback = { timeline: lmPrimeTimeline.create(), manifest: false, scope: "", last: null, ad: null, pendingTrack: null, pendingTimeline: null };
+
+  function elementVisible(element) {
+    if (!element?.isConnected) return false;
+    for (let node = element; node?.nodeType === 1; node = node.parentElement) {
+      if (node.hidden || node.getAttribute("hidden") !== null || node.getAttribute("aria-hidden") === "true") return false;
+      const style = typeof getComputedStyle === "function" ? getComputedStyle(node) : node.style;
+      if (style?.display === "none" || style?.visibility === "hidden" || style?.visibility === "collapse" || style?.opacity === "0") return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function hasAdIndicator() {
+    return Array.from(document.querySelectorAll(".atvwebplayersdk-adtimeindicator-text, .atvwebplayersdk-ad-timer"))
+      .some((node) => elementVisible(node) && String(node.textContent || "").trim());
+  }
+
+  function playbackScope() {
+    const url = new URL(location.href);
+    return url.pathname + ["gti", "titleId", "asin"].map((key) => `|${key}=${url.searchParams.get(key) || ""}`).join("");
+  }
+
+  function checkPlaybackSession() {
+    const scope = playbackScope();
+    if (playback.scope && scope !== playback.scope) {
+      playback.timeline.reset();
+      playback.manifest = false;
+      playback.last = playback.ad = playback.pendingTrack = playback.pendingTimeline = null;
+      state.adActive = false;
+      state.lastTickMs = null;
+      state.lastLive = "";
+      state.token += 1;
+      state.cues = [];
+      state.native = [];
+      state.index = state.activeIndex = -1;
+      state.fullTrack = false;
+      state.statusText = "视频已切换，正在读取字幕…";
+      if (ui.panelBody) renderPanel();
+      hideDict();
+    }
+    playback.scope = scope;
+  }
+
+  function syncAdUi() {
+    document.documentElement.classList.toggle("lm-prime-captions", state.settings.enabled && !state.adActive);
+    if (!ui.subs) return;
+    ui.subs.classList.toggle("lm-hidden", state.adActive);
+    ui.panel?.classList.toggle("lm-prime-ad-playing", state.adActive);
+    if (ui.adStatus) {
+      ui.adStatus.hidden = !state.adActive;
+      ui.adStatus.textContent = playback.ad?.exit ? "正在恢复正片字幕…" : "广告播放中，正片字幕已暂停";
+    }
+    if (state.adActive) {
+      state.peeking = false;
+      ui.subs.classList.remove("lm-peek");
+      hideDict();
+      if (ui.phraseButton) ui.phraseButton.hidden = true;
+    }
+  }
+
+  function installTimeline(message, video = videoEl()) {
+    if (message.scope && message.scope !== playback.scope) return false;
+    if (!Array.isArray(message.breaks) || message.breaks.length > 2000) return false;
+    const duration = message.duration;
+    if (duration !== undefined && (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0)) return false;
+    const expected = state.adActive ? playback.ad?.duration : Number(video?.duration) * 1000 || playback.last?.duration;
+    if (typeof duration === "number" && Number.isFinite(expected) && expected > 0 && Math.abs(duration - expected) > 2000) {
+      // An independent advertisement has its own short MPD. Never let that
+      // replace a programme timeline; a programme manifest arriving before the
+      // video source is ready can be retried once its duration becomes known.
+      if (!playback.manifest || (message.breaks.length && duration >= expected)) playback.pendingTimeline = message;
+      return false;
+    }
+    if (state.adActive && !message.breaks.length && playback.manifest) return false;
+    if (!playback.timeline.setBreaks(message.breaks)) return false;
+    playback.manifest = true;
+    playback.pendingTimeline = null;
+    state.lastTickMs = null;
+    return true;
+  }
+
+  function contentTimeMs(video = videoEl()) {
+    checkPlaybackSession();
+    if (!video) return playback.last?.content || 0;
+    const raw = Math.max(0, Number(video.currentTime) * 1000 || 0);
+    const source = String(video.currentSrc || video.src || "");
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const duration = Number.isFinite(video.duration) ? video.duration * 1000 : playback.last?.duration;
+    if (!state.adActive && !hasAdIndicator() && playback.pendingTimeline) installTimeline(playback.pendingTimeline, video);
+    const inTimelineAd = playback.timeline.breaks().some((part) => raw >= part.start && raw < part.end);
+    const advertised = hasAdIndicator() || inTimelineAd;
+    if (advertised && !state.adActive) {
+      const previous = playback.last;
+      playback.ad = {
+        video: previous?.video || video, source: previous?.source ?? source,
+        duration: previous?.duration ?? duration,
+        start: previous && previous.video === video && source === previous.source && raw >= previous.raw && raw - previous.raw <= 1500 ? raw : previous?.raw ?? raw,
+        content: previous?.content ?? playback.timeline.toContent(raw), lastRaw: raw, lastAt: now,
+        continuous: !video.seeking && (!previous || (previous.video === video && previous.source === source && raw >= previous.raw && raw - previous.raw <= Math.max(0, now - previous.at) * Math.max(1, Number(video.playbackRate) || 1) + 1500)), exit: null
+      };
+      state.adActive = true;
+      state.lastTickMs = null;
+      state.lastLive = "";
+    }
+    if (state.adActive) {
+      const ad = playback.ad;
+      const allowedAdvance = Math.max(0, now - ad.lastAt) * Math.max(1, Number(video.playbackRate) || 1) + 1500;
+      if (video.seeking || video !== ad.video || source !== ad.source || raw < ad.lastRaw - 50 || raw - ad.lastRaw > allowedAdvance) ad.continuous = false;
+      ad.lastRaw = raw;
+      ad.lastAt = now;
+      if (advertised) ad.exit = null;
+      else if (!ad.exit || ad.exit.video !== video || ad.exit.source !== source || raw < ad.exit.raw - 50) ad.exit = { at: now, raw, video, source };
+      // Wait through the short gap between ad clips and source restoration.
+      // Keep the first stable resume timestamp, rather than subtracting the
+      // post-ad debounce time or the time a paused/buffering ad spent on screen.
+      if (ad.exit && now - ad.exit.at >= 400) {
+        const covered = playback.timeline.breaks().some((part) => ad.start <= part.end + 500 && ad.exit.raw >= part.start - 500);
+        if (!covered && ad.continuous && ad.exit.raw > ad.start) playback.timeline.addBreak(ad.start, ad.exit.raw);
+        state.adActive = false;
+        state.lastTickMs = null;
+        ui.rateVideo = null;
+        playback.ad = null;
+        if (playback.pendingTimeline) installTimeline(playback.pendingTimeline, video);
+        const pending = playback.pendingTrack;
+        playback.pendingTrack = null;
+        const scope = playback.scope;
+        if (pending) queueMicrotask(() => { if (playbackScope() === scope) applyTrack(pending.text, pending.lang); });
+        queueMicrotask(() => { if (!state.fullTrack) requestTrack(); });
+      } else {
+        syncAdUi();
+        return ad.content;
+      }
+    }
+    const content = playback.timeline.toContent(raw);
+    playback.last = { video, source, raw, content, duration, at: now };
+    syncAdUi();
+    return content;
+  }
+
+  function subtitleTimeMs(video = videoEl()) {
+    const content = contentTimeMs(video);
+    return state.trackClock === "media" && video && !state.adActive ? video.currentTime * 1000 : content;
+  }
 
   function send(type, payload = {}) {
     return lmSendMessage(type, payload);
   }
 
   function videoEl() {
-    const videos = Array.from(document.querySelectorAll("video"));
+    const videos = Array.from(document.querySelectorAll("video")).filter(elementVisible);
     return videos.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0] || null;
   }
 
@@ -59,7 +205,8 @@
     ui.dict = root.querySelector("#lm-dict");
     ui.panel = document.createElement("section");
     ui.panel.className = "lm-panel lm-prime-panel";
-    ui.panel.innerHTML = `<div class="lm-panel-tabs"><button type="button" class="active" data-act="panel">字幕</button><button type="button" class="lm-prime-follow active" data-act="follow" aria-pressed="true" title="自动跟随当前字幕；向上滚动可暂停">跟随中</button></div><div class="lm-panel-body" tabindex="0" aria-label="字幕列表"></div><div class="lm-mini-help">停留查词 · 向上滚动暂停跟随 · A / S / D 切换字幕</div>`;
+    ui.panel.innerHTML = `<div class="lm-panel-tabs"><button type="button" class="active" data-act="panel">字幕</button><button type="button" class="lm-prime-follow active" data-act="follow" aria-pressed="true" title="自动跟随当前字幕；向上滚动可暂停">跟随中</button></div><div class="lm-prime-ad-status" role="status" aria-live="polite" hidden></div><div class="lm-panel-body" tabindex="0" aria-label="字幕列表"></div><div class="lm-mini-help">停留查词 · 向上滚动暂停跟随 · A / S / D 切换字幕</div>`;
+    ui.adStatus = ui.panel.querySelector(".lm-prime-ad-status");
     ui.panelBody = ui.panel.querySelector(".lm-panel-body");
     ui.followButton = ui.panel.querySelector("[data-act='follow']");
     ui.cueRows = [];
@@ -226,16 +373,16 @@
     ui.subs.classList.toggle("lm-listen", !!state.settings.listenMode);
     ui.learningLine.style.fontSize = `${state.settings.fontSize}px`;
     ui.nativeLine.style.fontSize = `${Math.max(14, state.settings.fontSize - 4)}px`;
-    document.documentElement.classList.toggle("lm-prime-captions", enabled);
+    contentTimeMs();
     const video = videoEl();
-    if (video && ui.clockVideo !== video) {
+    if (!state.adActive && video && ui.clockVideo !== video) {
       ui.clockVideo?.removeEventListener("seeking", resetPlaybackClock);
       ui.clockVideo?.removeEventListener("seeked", resetPlaybackClock);
       video.addEventListener("seeking", resetPlaybackClock);
       video.addEventListener("seeked", resetPlaybackClock);
       ui.clockVideo = video;
     }
-    if (enabled && video && (ui.rateVideo !== video || ui.appliedRate !== state.settings.playbackRate)) {
+    if (enabled && !state.adActive && video && (ui.rateVideo !== video || ui.appliedRate !== state.settings.playbackRate)) {
       video.playbackRate = Number(state.settings.playbackRate) || 1;
       ui.rateVideo = video;
       ui.appliedRate = state.settings.playbackRate;
@@ -244,7 +391,7 @@
   }
 
   function requestTrack() {
-    if (!state.settings.enabled) return;
+    if (!state.settings.enabled || state.adActive || hasAdIndicator()) return;
     window.postMessage({ source: "linguamate-content", type: "LM_PRIME_PULL", lang: state.settings.learningLang }, "*");
   }
 
@@ -426,7 +573,7 @@
   }
 
   function onPhraseSelection(ev) {
-    if (!state.settings.enabled || ev.target === ui.phraseButton || ui.dict?.contains(ev.target)) return;
+    if (!state.settings.enabled || state.adActive || ev.target === ui.phraseButton || ui.dict?.contains(ev.target)) return;
     const selected = [ui.subs, ui.panel].map((root) => lmJapaneseUi.selectionFrom(root, document.getSelection?.())).find((item) => item && item.isPhrase && languageMatches(item.lang, "ja"));
     if (!selected) { ui.phraseButton.hidden = true; ui.phraseSelection = null; return; }
     const selection = document.getSelection();
@@ -476,9 +623,11 @@
   function renderCurrent() {
     if (!ui.learningLine) return;
     const video = videoEl();
-    const idx = video ? currentIndex(video.currentTime * 1000) : -1;
+    const ms = subtitleTimeMs(video);
+    if (state.adActive) return;
+    const idx = video ? currentIndex(ms) : -1;
     state.activeIndex = idx;
-    state.index = idx >= 0 ? idx : video ? navigationIndex(video.currentTime * 1000) : -1;
+    state.index = idx >= 0 ? idx : video ? navigationIndex(ms) : -1;
     const cue = state.cues[idx];
     const native = state.native[idx] || "";
     ui.learningLine.classList.toggle("lm-hidden", !state.settings.showLearning || !cue);
@@ -553,8 +702,11 @@
 
   function seekTo(ms, play) {
     const video = videoEl();
-    if (!video) return;
-    video.currentTime = Math.max(0, ms / 1000 + 0.01);
+    contentTimeMs(video);
+    if (!video || state.adActive) return;
+    const target = state.trackClock === "media" ? ms : playback.timeline.toMedia(Math.max(0, ms));
+    if (!Number.isFinite(target)) return;
+    video.currentTime = Math.max(0, target / 1000 + 0.01);
     state.lastTickMs = null;
     if (play) video.play().catch(() => {});
     else video.pause();
@@ -594,13 +746,15 @@
 
   function syncTextTracks() {
     const video = videoEl();
-    if (!state.settings.enabled || !video || !video.textTracks || state.fullTrack) return;
+    contentTimeMs(video);
+    if (!state.settings.enabled || state.adActive || !video || !video.textTracks || state.fullTrack) return;
     const candidates = Array.from(video.textTracks).filter((track) => languageMatches(track.language, state.settings.learningLang));
     candidates.sort((a, b) => Number(b.mode === "showing") - Number(a.mode === "showing"));
     const chosen = candidates.find((track) => cuesFromTextTrack(track).length);
     if (!chosen) return;
     const best = cuesFromTextTrack(chosen);
     state.fullTrack = true;
+    state.trackClock = "media";
     state.token += 1;
     state.cues = best;
     state.trackLang = chosen.language || state.settings.learningLang;
@@ -611,7 +765,9 @@
   }
 
   function scrapeLiveCaption() {
-    if (!state.settings.enabled || state.fullTrack) return;
+    const now = contentTimeMs();
+    if (!state.settings.enabled || state.adActive || state.fullTrack) return;
+    state.trackClock = "content";
     const nodes = document.querySelectorAll("[class*='captions-text'], [class*='CaptionsText']");
     const parts = [];
     nodes.forEach((node) => {
@@ -622,19 +778,16 @@
     const text = parts.join(" ");
     if (!text) {
       const previous = state.cues[state.cues.length - 1];
-      const now = (videoEl()?.currentTime || 0) * 1000;
       if (state.lastLive && previous && now > previous.start) previous.end = Math.min(previous.end, now);
       state.lastLive = "";
       return;
     }
     if (text === state.lastLive) {
       const current = state.cues[state.cues.length - 1];
-      const now = (videoEl()?.currentTime || 0) * 1000;
       if (current && now >= current.start) current.end = Math.max(current.end, now + 500);
       return;
     }
     state.lastLive = text;
-    const now = (videoEl()?.currentTime || 0) * 1000;
     const prev = state.cues[state.cues.length - 1];
     if (prev && now - prev.start < 8000) prev.end = now;
     state.cues.push({ start: now, end: now + 4000, text });
@@ -648,7 +801,8 @@
   }
 
   function applyTrack(text, language = "") {
-    if (!state.settings.enabled) return;
+    contentTimeMs();
+    if (!state.settings.enabled || state.adActive) return;
     let parsed;
     try {
       parsed = parseTrack(text);
@@ -667,6 +821,7 @@
       return;
     }
     state.fullTrack = true;
+    state.trackClock = "content";
     state.token += 1;
     state.cues = parsed.cues;
     state.trackLang = lang || state.settings.learningLang;
@@ -690,7 +845,8 @@
   }
 
   async function showDict(wordEl, phrase = null) {
-    if (!state.settings.enabled || !wordEl?.isConnected) return;
+    contentTimeMs();
+    if (!state.settings.enabled || state.adActive || !wordEl?.isConnected) return;
     hoverWord = wordEl;
     const token = ++lookupToken;
     const word = phrase?.surface || wordEl.dataset.word;
@@ -767,7 +923,7 @@
         ...(persistentJapanese ? { japanese: persistentJapanese } : {}),
         videoTitle: document.title,
         videoUrl: location.href,
-        time: videoEl()?.currentTime || 0
+        time: contentTimeMs() / 1000
       }),
       onChange: ({ saved, item }) => {
         state.vocab = state.vocab.filter((row) => row.id !== item?.id);
@@ -789,7 +945,7 @@
   }
 
   function isPrimeWord(word) {
-    return !!(state.settings.enabled && word && (ui.subs?.contains(word) || ui.panel?.contains(word)));
+    return !!(state.settings.enabled && !state.adActive && word && (ui.subs?.contains(word) || ui.panel?.contains(word)));
   }
 
   function dictOpen() {
@@ -872,7 +1028,7 @@
         ...(japanese ? { japanese } : {}),
         videoTitle: document.title,
         videoUrl: location.href,
-        time: videoEl()?.currentTime || 0
+        time: contentTimeMs() / 1000
       }
     });
     if (saved.ok && saved.item) {
@@ -893,6 +1049,8 @@
 
   function onKeyDown(ev) {
     if (!state.settings.enabled || ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target) || !state.cues.length) return;
+    contentTimeMs();
+    if (state.adActive) return;
     const key = ev.key.toLowerCase();
     if (!["a", "s", "d"].includes(key)) return;
     ev.preventDefault();
@@ -907,20 +1065,26 @@
   function onKeyUp(ev) {
     if (ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target) || !["a", "s", "d"].includes(ev.key.toLowerCase())) return;
     ui.subs?.classList.remove("lm-peek");
-    if (state.peeking && state.settings.enabled) videoEl()?.play().catch(() => {});
+    contentTimeMs();
+    if (state.peeking && state.settings.enabled && !state.adActive) videoEl()?.play().catch(() => {});
     state.peeking = false;
   }
 
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("keyup", onKeyUp, true);
 
-  function resetPlaybackClock() { state.lastTickMs = null; }
+  function resetPlaybackClock() {
+    state.lastTickMs = null;
+    if (playback.ad) playback.ad.continuous = false;
+  }
 
   function onTick() {
-    if (!state.settings.enabled) return;
     const video = videoEl();
     if (!video) return;
-    const ms = video.currentTime * 1000;
+    const wasAd = state.adActive;
+    const ms = subtitleTimeMs(video);
+    if (!state.settings.enabled || state.adActive) return;
+    if (wasAd) syncSettings();
     const previous = state.cues[state.activeIndex];
     const elapsed = state.lastTickMs === null ? Infinity : ms - state.lastTickMs;
     if (state.settings.autoPause && !video.seeking && !state.peeking && !video.paused && previous && elapsed >= 0 && elapsed <= 1000 && state.lastTickMs < previous.end && ms >= previous.end) video.pause();
@@ -932,8 +1096,24 @@
     if (event.source !== window) return;
     const msg = event.data;
     if (!msg || msg.source !== "linguamate-prime") return;
+    checkPlaybackSession();
+    if (msg.scope && msg.scope !== playback.scope) return;
+    if (msg.type === "LM_PRIME_MPD" && msg.role === "content" && typeof msg.text === "string" && msg.text.length <= 5000000) {
+      // Page Trusted Types may prohibit DOMParser in MAIN world. Parse the
+      // observed XML in the extension's isolated world using the same parser.
+      try {
+        const manifest = lmPrimeManifest.parse(msg.text, { adActive: msg.adActive === true });
+        if (manifest && installTimeline({ ...msg, ...manifest })) renderCurrent();
+      } catch (_) { /* keep the observed ad clock if the manifest is unusable */ }
+    }
+    if (msg.type === "LM_PRIME_TIMELINE" && installTimeline(msg)) renderCurrent();
     if (msg.type === "LM_TRACK") {
       mount();
+      contentTimeMs();
+      if (state.adActive) {
+        if (msg.role === "content" && !state.fullTrack) playback.pendingTrack = { text: msg.text, lang: msg.lang };
+        return;
+      }
       applyTrack(msg.text, msg.lang);
     }
   });
@@ -960,6 +1140,7 @@
     if (vocab.ok) { state.vocab = vocab.vocab; state.known = vocab.known || {}; }
     if (!res.ok) lmNotify(res.error || "设置读取失败，请刷新页面重试", "error");
     mount();
+    requestTrack();
     setInterval(mount, 1000);
     setInterval(() => {
       if (!state.fullTrack) requestTrack();
@@ -972,9 +1153,10 @@
     });
     setInterval(() => {
       placeOverlay();
+      contentTimeMs();
       syncTextTracks();
       scrapeLiveCaption();
-      if (state.cues.length) onTick();
+      onTick();
     }, 250);
   }
 
