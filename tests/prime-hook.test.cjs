@@ -93,10 +93,12 @@ await fetch(playbackUrl);await settle();
 check('tracks from programme resources carry the content role',posts.some(message=>message.type==='LM_TRACK'&&message.url===trackUrl&&message.role==='content'));
 check('tracks retain their request programme scope',posts.filter(message=>message.type==='LM_TRACK').every(message=>message.scope===currentScope()));
 const programmeBeforeAds=timelines().at(-1);
-const container=document.createElement('div');container.innerHTML='<span class="atvwebplayersdk-adtimeindicator-text">Ad 1 of 2</span>';document.body.append(container);
+// Captured from the current Amazon Japan player: the countdown is the only
+// stable SDK class; neither parent has the older exact ad-timer class.
+const container=document.createElement('div');container.className='fixture-random-ad-parent';container.setAttribute('aria-label','広告を再生しています。コンテンツは、1分48秒後に再開されます。');container.innerHTML='<div class="fixture-random-ad-inner"><span class="atvwebplayersdk-ad-timer-remaining-time">1:48</span></div>';document.body.append(container);
 const trustedCount=timelines().length;
 await manifest(mpd('<Period/>','mediaPresentationDuration="PT30S"'),'https://video.example/standalone-ad.mpd');
-check('an unmarked standalone MPD during ads cannot erase the programme timeline',timelines().length===trustedCount);
+check('the current Amazon Japan countdown prevents an unmarked standalone ad MPD from erasing the programme timeline',timelines().length===trustedCount);
 await manifest(mpd('<Period><Role value="Ad"/></Period>','mediaPresentationDuration="PT30S"'),'https://video.example/marked-ad.mpd');
 check('an all-ad MPD cannot replace the programme timeline',timelines().length===trustedCount);
 await manifest(mpd('<Period duration="PT30S"><Role value="Ad"/></Period><Period/>'),'https://video.example/full-presentation.mpd');
@@ -105,7 +107,7 @@ pull();await settle();
 check('ad-time manifests do not replace an existing cached programme timeline',JSON.stringify(timelines().at(-1))===JSON.stringify(programmeBeforeAds));
 resources.set(playbackUrl,{text:JSON.stringify({subtitleUrls:[{url:adTrack,languageCode:'en'}]}),type:'application/json'});
 await fetch(playbackUrl);await settle();
-check('visible ad resources cannot overwrite programme tracks',!requests.some(request=>request.url===adTrack));
+check('the current Amazon Japan countdown prevents ad resources from overwriting programme tracks',!requests.some(request=>request.url===adTrack));
 pull();await settle();
 check('a pull during an advert still uses the cached programme track',requests.at(-1).url===trackUrl);
 container.style.display='none';await fetch(playbackUrl);await settle();
@@ -121,6 +123,10 @@ container.style.opacity='';container.querySelector('span').className='atvwebplay
 resources.set(playbackUrl,{text:JSON.stringify({subtitleUrls:[{url:adTrack,languageCode:'en'}]}),type:'application/json'});
 before=requests.filter(request=>request.url===adTrack).length;await fetch(playbackUrl);await settle();
 check('the alternate visible advert timer also protects programme tracks',requests.filter(request=>request.url===adTrack).length===before);
+container.querySelector('span').className='atvwebplayersdk-adtimeindicator-text';
+before=requests.filter(request=>request.url===adTrack).length;await fetch(playbackUrl);await settle();
+check('the legacy adtimeindicator text still protects programme tracks',requests.filter(request=>request.url===adTrack).length===before);
+container.querySelector('span').className='atvwebplayersdk-ad-timer-remaining-time';container.querySelector('span').textContent='1:48';
 const lateAdUrl='https://video.example/late-ad.mpd';resources.set(lateAdUrl,{text:mpd('<Period/>','mediaPresentationDuration="PT30S"'),delay:true});
 const delayedAd=fetch(lateAdUrl);const beforeLateAd=timelines().length;container.style.display='none';resources.get(lateAdUrl).release();await delayedAd;await settle();
 check('an unmarked ad MPD requested during ads remains ignored after its delayed response',timelines().length===beforeLateAd);
@@ -142,7 +148,7 @@ check('late fetch and XHR responses from the old programme are ignored',!posts.s
 await manifest(xhrBody,'https://video.example/new-programme.mpd');
 check('the new programme manifest carries the new scope',timelines().at(-1).scope===currentScope());
 // The first programme resource response often arrives before pre-roll ends.
-moveTo('preroll-programme');container.style.display='';
+moveTo('preroll-programme');container.style.display='';container.querySelector('span').className='atvwebplayersdk-ad-timer-remaining-time';container.querySelector('span').textContent='1:48';
 resources.set(playbackUrl,{text:JSON.stringify({subtitleUrls:[{url:trackUrl,languageCode:'en'}]}),type:'application/json'});
 before=requests.filter(request=>request.url===trackUrl).length;await fetch(playbackUrl);await settle();pull();await settle();
 check('the first pre-roll programme candidate is retained without fetching it during ads',requests.filter(request=>request.url===trackUrl).length===before);

@@ -223,3 +223,92 @@ test("saved vocabulary uses programme time and SPA episode changes discard the e
   assert.equal(h.prime.playback.timeline.breaks().length, 0);
   assert.equal(h.prime.playback.scope, oldScope);
 });
+
+test("Prime's remaining-time marker freezes study features even without a legacy timer parent", async () => {
+  const h = primeHarness({ settings: { autoPause: true } });
+  h.cues(90); at(h, 10);
+  const p = h.prime;
+  const oldIndex = p.state.activeIndex;
+  const oldRow = p.ui.activeRow;
+  const oldScroll = p.ui.panelBody.scrollTop;
+  const word = p.ui.learningLine.querySelector(".lm-word");
+  const parent = h.document.createElement("div");
+  parent.className = "prime-player-ad-layout-variant";
+  parent.setAttribute("aria-hidden", "true");
+  const marker = h.document.createElement("span");
+  marker.className = "atvwebplayersdk-ad-timer-remaining-time";
+  marker.textContent = "1:48";
+  parent.append(marker);
+  h.document.documentElement.append(parent);
+
+  p.onTick();
+  assert.equal(p.state.adActive, true, "the actual Prime timer class starts advertising state");
+  assert.equal(p.ui.adStatus.hidden, false);
+  assert.equal(p.ui.subs.classList.contains("lm-hidden"), true);
+  assert.equal(h.document.documentElement.classList.contains("lm-prime-captions"), false);
+  const lookups = h.lookupRequests().length;
+  await p.showDict(word);
+  assert.equal(h.lookupRequests().length, lookups, "advertising cannot open a word card");
+  h.advance(108000); at(h, 118);
+  assert.equal(p.state.activeIndex, oldIndex);
+  assert.equal(p.ui.activeRow, oldRow);
+  assert.equal(p.ui.panelBody.scrollTop, oldScroll);
+  assert.equal(h.video.pauseCalls, 0, "crossing programme sentence ends cannot pause advertising");
+  const key = h.key("keydown", "d");
+  p.seekTo(50000, true);
+  assert.equal(key.defaultPrevented, false);
+  assert.equal(h.video.currentTime, 118, "transcript and keyboard seeking remain blocked during the ad");
+  assert.equal(h.video.playCalls, 0);
+
+  finish(h, marker);
+  assert.equal(p.state.adActive, false);
+  assert.equal(p.ui.adStatus.hidden, true);
+  assert.equal(p.ui.subs.classList.contains("lm-hidden"), false);
+  assert.equal(p.contentTimeMs(), 10401);
+  assert.equal(p.state.activeIndex, oldIndex);
+  assert.deepEqual(JSON.parse(JSON.stringify(p.playback.timeline.breaks())), [{ start: 10000, end: 118000 }]);
+});
+
+test("a cached empty programme MPD replay cannot erase an observed advertising break", () => {
+  const h = primeHarness(); h.cues(90); at(h, 10);
+  const programme = { type: "LM_PRIME_TIMELINE", role: "content", duration: h.video.duration * 1000, breaks: [] };
+  message(h, programme);
+  const marker = indicator(h); h.prime.onTick();
+  h.advance(30000); at(h, 40); finish(h, marker);
+  assert.equal(h.prime.contentTimeMs(), 10401);
+
+  message(h, programme);
+  assert.equal(h.prime.contentTimeMs(), 10401, "a later pull must retain the observed content offset");
+  assert.deepEqual(JSON.parse(JSON.stringify(h.prime.playback.timeline.breaks())), [{ start: 10000, end: 40000 }]);
+  h.prime.seekTo(12000, false);
+  assert.equal(h.video.currentTime, 42.01, "subtitle seeking still includes the previously observed ad");
+});
+
+test("a later nonoverlapping manifest break preserves earlier observed advertising", () => {
+  const h = primeHarness(); h.cues(90); at(h, 10);
+  const marker = indicator(h); h.prime.onTick();
+  h.advance(30000); at(h, 40); finish(h, marker);
+  message(h, { type: "LM_PRIME_TIMELINE", role: "content", duration: h.video.duration * 1000, breaks: [{ start: 60000, end: 75000 }] });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(h.prime.playback.timeline.breaks())), [
+    { start: 10000, end: 40000 },
+    { start: 60000, end: 75000 }
+  ]);
+  assert.equal(h.prime.contentTimeMs(), 10401);
+  at(h, 80);
+  assert.equal(h.prime.contentTimeMs(), 35000, "both observed and manifest advertising intervals are removed");
+  h.prime.seekTo(35000, false);
+  assert.equal(h.video.currentTime, 80.01);
+});
+
+test("an updated manifest refines overlapping observed boundaries without double-counting", () => {
+  const h = primeHarness(); h.cues(90); at(h, 10);
+  const marker = indicator(h); h.prime.onTick();
+  h.advance(30000); at(h, 40); finish(h, marker);
+  const programme = { type: "LM_PRIME_TIMELINE", role: "content", duration: h.video.duration * 1000, breaks: [{ start: 9750, end: 40050 }] };
+  for (let i = 0; i < 3; i += 1) message(h, programme);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.prime.playback.timeline.breaks())), [{ start: 9750, end: 40050 }]);
+  assert.equal(h.prime.contentTimeMs(), 10101);
+  message(h, { ...programme, breaks: [{ start: -1, end: 40050 }] });
+  assert.equal(h.prime.contentTimeMs(), 10101, "a malformed replacement cannot discard the usable timeline");
+});

@@ -61,6 +61,29 @@ function at(seconds,milliseconds=seconds*1000){fixtureClock=milliseconds;fixture
 function showMarker(){markerParent.hidden=false;marker.textContent='Ad 0:30';p.onTick();}
 function hideMarker(){markerParent.hidden=true;p.onTick();}
 
+// Current Amazon Japan markup has this class only on the countdown text.
+// Its random-class parents cannot be found through the older ad-timer selector.
+prepare();at(9);
+marker.className='atvwebplayersdk-ad-timer-remaining-time';markerParent.className='fixture-random-ad-parent';
+markerParent.setAttribute('aria-label','広告を再生しています。コンテンツは、1分48秒後に再開されます。');
+markerParent.hidden=false;marker.textContent='1:48';markerParent.style.display='none';at(9.1);
+check('a current countdown inside a display-hidden ancestor does not freeze the programme',!p.hasAdIndicator()&&!p.state.adActive);
+markerParent.style.display='';markerParent.style.opacity='0';at(9.2);
+check('a current countdown inside an opacity-hidden ancestor does not freeze the programme',!p.hasAdIndicator()&&!p.state.adActive);
+markerParent.style.opacity='';marker.textContent='   ';at(9.3);
+check('an empty current countdown template does not freeze the programme',!p.hasAdIndicator()&&!p.state.adActive);
+markerParent.hidden=true;marker.textContent='1:48';at(10);markerParent.hidden=false;p.onTick();
+const currentTimerRow=p.ui.activeRow,currentTimerIndex=p.state.activeIndex,currentTimerScroll=p.ui.panelBody.scrollTop;
+check('the current Amazon Japan remaining-time marker enters advertising without a legacy parent class',p.hasAdIndicator()&&p.state.adActive);
+check('the current Amazon Japan countdown hides study captions and shows the ad status',getComputedStyle(p.ui.subs).display==='none'&&!p.ui.adStatus.hidden);
+marker.textContent='0:55';at(63);
+check('a countdown-only ad freezes the programme row and transcript scroll',p.ui.activeRow===currentTimerRow&&p.state.activeIndex===currentTimerIndex&&p.ui.panelBody.scrollTop===currentTimerScroll&&p.contentTimeMs()===10000);
+await post({type:'LM_TRACK',lang:'en',text:'WEBVTT\\n\\n00:00.000 --> 00:03.000\\nAn advertisement'});
+check('the current countdown blocks advertisement subtitles from replacing the programme',p.state.cues[0].text===originalCues[0].text);
+at(118);hideMarker();at(118.401,118401);await settle();
+check('the current countdown resumes the programme without adding its 108 seconds to subtitle time',!p.state.adActive&&Math.abs(p.contentTimeMs()-10401)<.001&&p.ui.learningLine.textContent===originalCues[1].text);
+marker.className='atvwebplayersdk-adtimeindicator-text';markerParent.className='';markerParent.removeAttribute('aria-label');
+
 prepare();
 await post({type:'LM_PRIME_MPD',role:'content',adActive:false,text:'<MPD mediaPresentationDuration="PT2M"><Period duration="PT10S"/><Period start="PT10S" duration="PT30S"><Role value="Ad"/></Period><Period start="PT40S"/></MPD>'});
 check('raw MPD fallback is parsed in the content realm and restores exact advertising boundaries',JSON.stringify(p.playback.timeline.breaks())==='[{"start":10000,"end":40000}]');

@@ -50,7 +50,7 @@ function linguaMateInstallPrimeHook() {
   }
 
   function adIndicatorVisible() {
-    return Array.from(document.querySelectorAll(".atvwebplayersdk-adtimeindicator-text, .atvwebplayersdk-ad-timer")).some((element) => {
+    return Array.from(document.querySelectorAll(".atvwebplayersdk-adtimeindicator-text, .atvwebplayersdk-ad-timer, .atvwebplayersdk-ad-timer-remaining-time")).some((element) => {
       if (!element.isConnected || !String(element.textContent || "").trim()) return false;
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return false;

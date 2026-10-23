@@ -42,7 +42,9 @@
   }
 
   function hasAdIndicator() {
-    return Array.from(document.querySelectorAll(".atvwebplayersdk-adtimeindicator-text, .atvwebplayersdk-ad-timer"))
+    // Current Prime players render the countdown as a standalone span, with
+    // no .atvwebplayersdk-ad-timer wrapper (including on Amazon Japan).
+    return Array.from(document.querySelectorAll(".atvwebplayersdk-adtimeindicator-text, .atvwebplayersdk-ad-timer, .atvwebplayersdk-ad-timer-remaining-time"))
       .some((node) => elementVisible(node) && String(node.textContent || "").trim());
   }
 
@@ -103,7 +105,16 @@
       return false;
     }
     if (state.adActive && !message.breaks.length && playback.manifest) return false;
+    const knownBreaks = playback.timeline.breaks();
     if (!playback.timeline.setBreaks(message.breaks)) return false;
+    // The hook replays cached MPDs on subtitle pulls. An MPD without ad
+    // periods must not erase ads already observed in this programme session.
+    // For an overlapping interval, prefer the manifest's exact boundaries.
+    for (const part of knownBreaks) {
+      if (!message.breaks.some((current) => part.start < current.end && part.end > current.start)) {
+        playback.timeline.addBreak(part.start, part.end);
+      }
+    }
     playback.manifest = true;
     playback.pendingTimeline = null;
     state.lastTickMs = null;
