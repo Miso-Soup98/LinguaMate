@@ -132,6 +132,46 @@ html.lm-hide-yt-captions .caption-window {
 .lm-word.lm-saved { box-shadow: inset 0 -2px 0 var(--lm-gold); color: var(--lm-gold); }
 .lm-word.lm-known { opacity: 0.72; }
 
+.lm-ja-word { user-select: text; -webkit-user-select: text; }
+.lm-ja-ruby { ruby-align: center; }
+.lm-ja-ruby rt {
+  font-size: max(0.52em, 9px);
+  font-weight: 500;
+  line-height: 1.2;
+  color: #d7e3ec;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+.lm-ja-word[data-furigana="hover"] rt { visibility: hidden; }
+.lm-ja-word[data-furigana="unknown"].lm-known rt { display: none; }
+.lm-cue-learning[data-japanese-state],
+.lm-cue-native[data-japanese-state] { line-height: 1.8; }
+.lm-ja-word[data-furigana="hover"]:hover rt,
+.lm-ja-word[data-furigana="hover"]:focus-within rt { visibility: visible; }
+.lm-ja-analysis { margin-top: 10px; font-size: 13px; line-height: 1.6; }
+.lm-ja-analysis dl { margin: 0; }
+.lm-ja-detail { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 8px; }
+.lm-ja-detail dt { color: var(--lm-muted); }
+.lm-ja-detail dd { margin: 0; overflow-wrap: anywhere; }
+.lm-ja-candidates ul { margin: 4px 0 0; padding-left: 18px; }
+.lm-ja-note { color: var(--lm-muted); font-size: 12px; margin: 8px 0 0; }
+.lm-phrase-query {
+  position: fixed;
+  z-index: 2147483001;
+  max-width: min(420px, calc(100vw - 24px));
+  border: 1px solid var(--lm-accent, #2dd4bf);
+  border-radius: 10px;
+  background: rgba(12, 18, 24, 0.97);
+  color: #eef4f8;
+  padding: 9px 12px;
+  font: 13px/1.45 "Segoe UI", "Microsoft YaHei", sans-serif;
+  box-shadow: var(--lm-shadow);
+  cursor: pointer;
+}
+.lm-phrase-query[hidden] { display: none !important; }
+.lm-phrase-query:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
 .lm-dict {
   position: fixed;
   z-index: 2147483000;
@@ -193,6 +233,7 @@ html.lm-hide-yt-captions .caption-window {
 .lm-dict-phonetic { color: var(--lm-muted); font-size: 13px; }
 .lm-dict-actions { margin-left: auto; display: flex; gap: 6px; }
 .lm-dict-actions button,
+.lm-accents button,
 .lm-dict-save,
 .lm-chip {
   border: 0;
@@ -304,6 +345,7 @@ html.lm-hide-yt-captions .caption-window {
 
 .lm-cue {
   display: block;
+  box-sizing: border-box;
   width: 100%;
   text-align: left;
   border: 0;

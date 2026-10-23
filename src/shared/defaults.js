@@ -12,6 +12,7 @@ const LM_DEFAULTS = {
   panelOpen: true,
   playbackRate: 1,
   hideYoutubeCaptions: true,
+  japaneseFurigana: "unknown",
   accent: "us"
 };
 

@@ -34,6 +34,7 @@ window.chrome = {
   sendMessage(message,callback){
     if(message.type==='LM_LOOKUP') return callback({ok:true,result:{word:message.word,translation:'fixture meaning'}});
     if(message.type==='LM_TRANSLATE') return callback({ok:true,result:{text:message.text}});
+    if(message.type==='LM_JA_ANALYZE') return callback({ok:true,tokens:Array.from(new Intl.Segmenter('ja',{granularity:'word'}).segment(message.text),part=>({text:part.segment,surface:part.segment,lemma:part.segment,isWordLike:part.isWordLike,reading:'',baseReading:'',pos:'',conjugation:{labels:[]}}))});
     handleMessage(message).then(callback,error=>callback({ok:false,error:String(error.message)}));
   }},
  storage:{sync:area('sync'),local:area('local'),onChanged:{addListener(fn){fixtureListeners.push(fn)}}},
@@ -123,7 +124,7 @@ for (const platform of ["youtube", "prime"]) {
       const finish = `
       (async()=>{try{${checks}\n document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:true,checks:fixtureResults}))));}
       catch(error){document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:error.stack,checks:fixtureResults}))));}})();`;
-      const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "vocab-button"].map((name) => source(`src/shared/${name}.js`)), content, finish];
+      const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button"].map((name) => source(`src/shared/${name}.js`)), content, finish];
       const html = `<!doctype html><meta charset="utf-8"><title>pending</title><style>body{margin:0;background:#111}video{display:block;width:800px;height:450px}${source("src/content/youtube.css")}${source("src/content/prime.css")}</style><div class="html5-video-player"><video></video></div>${scripts.map((script) => `<script>${script.replace(/<\/script/gi, "<\\/script")}</script>`).join("")}`;
       const file = path.join(directory, `${platform}.html`);
       fs.writeFileSync(file, html, "utf8");

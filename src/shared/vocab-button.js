@@ -1,9 +1,28 @@
 // Bind one word card to the persistent vocabulary list. All state belongs to this
 // button, so a slow response cannot change a newer card for another word.
-function lmBindVocabButton(button, { word, lang, send, createItem, onChange }) {
+function lmBindVocabButton(button, { word, lang, send, createItem, onChange, japanese }) {
   const boundWord = String(word || "").trim();
   const boundLang = String(lang || "und").trim();
   const normalize = (value) => String(value || "").normalize("NFC").trim().toLowerCase();
+  const languageKey = (value) => /^ja(?:-|$)/i.test(value || "") ? "ja" : normalize(value || "und");
+  const kana = (value) => normalize(value).normalize("NFKC").replace(/[ァ-ヶ]/g, (character) => String.fromCharCode(character.charCodeAt(0) - 0x60));
+  const analysis = () => {
+    const value = typeof japanese === "function" ? japanese() : japanese;
+    return /^ja(?:-|$)/i.test(boundLang) && value && typeof value === "object" ? value : null;
+  };
+  function matches(item) {
+    if (!item || languageKey(item.lang) !== languageKey(boundLang)) return false;
+    const target = analysis();
+    if (!target?.lemma) return normalize(item.word) === normalize(boundWord);
+    const lemma = normalize(target.lemma);
+    const surface = normalize(target.surface || boundWord);
+    if (!item.japanese) return [lemma, surface].includes(normalize(item.word));
+    if (normalize(item.japanese.lemma || item.word) !== lemma) return false;
+    const targetReading = kana(target.baseReading || target.reading);
+    const storedReading = kana(item.japanese.baseReading || item.japanese.reading);
+    if (targetReading !== storedReading) return false;
+    return !target.entryId || !item.japanese.entryId || target.entryId === item.japanese.entryId;
+  }
   const status = (button.ownerDocument || document).createElement("div");
   status.className = "lm-vocab-status";
   status.setAttribute("role", "status");
@@ -46,9 +65,7 @@ function lmBindVocabButton(button, { word, lang, send, createItem, onChange }) {
       if (!response || response.ok !== true || !Array.isArray(response.vocab)) {
         throw new Error("vocabulary_list_failed");
       }
-      savedItem = response.vocab.find((item) => item
-        && normalize(item.word) === normalize(boundWord)
-        && normalize(item.lang || "und") === normalize(boundLang)) || null;
+      savedItem = response.vocab.find(matches) || null;
       known = true;
     } catch (error) {
       known = false;

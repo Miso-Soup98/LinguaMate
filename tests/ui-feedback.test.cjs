@@ -48,10 +48,11 @@ function contextFixture(send) {
 function popupFixture(send) {
   const h = contextFixture(send);
   const checkboxes = ["enabled", "autoPause", "listenMode", "showNative", "nativeInteractive", "highlightRare"];
-  for (const id of [...checkboxes, "learningLang", "nativeLang", "fontSize", "playbackRate", "accent"]) {
+  for (const id of [...checkboxes, "learningLang", "nativeLang", "fontSize", "playbackRate", "accent", "japaneseFurigana"]) {
     const node = h.add(checkboxes.includes(id) ? "input" : "select", id);
     node.type = checkboxes.includes(id) ? "checkbox" : id === "fontSize" ? "range" : "select-one";
   }
+  h.add("section", "japaneseSettings");
   for (const id of ["operationStatus", "stats"]) h.add("p", id);
   for (const id of ["retrySettings", "openOptions"]) h.add("button", id);
   vm.runInContext(source("src/popup/popup.js"), h.context);
@@ -134,6 +135,28 @@ test("popup failed writes retain newer edits for an explicit retry", async () =>
   h.document.getElementById("retrySettings").click(); await flush();
   assert.equal(writes[1].message.settings.fontSize, 31);
   writes[1].callback({ ok: true }); await flush();
+});
+
+test("popup exposes Japanese furigana settings only for Japanese and saves the selected mode", async () => {
+  const writes = [];
+  const h = popupFixture((message, callback) => {
+    if (message.type === "LM_GET_SETTINGS") callback({ ok: true, settings });
+    else if (message.type === "LM_VOCAB_LIST") callback({ ok: true, vocab: [] });
+    else { writes.push(message); callback({ ok: true }); }
+  });
+  await flush();
+  const section = h.document.getElementById("japaneseSettings");
+  const language = h.document.getElementById("learningLang");
+  const mode = h.document.getElementById("japaneseFurigana");
+  assert.equal(section.hidden, true);
+  assert.equal(mode.value, "unknown");
+  language.value = "ja"; h.document.emit("change", { target: language }); await flush();
+  assert.equal(section.hidden, false);
+  mode.value = "hover"; h.document.emit("change", { target: mode }); await flush();
+  assert.equal(writes.at(-1).settings.japaneseFurigana, "hover");
+  language.value = "de"; h.document.emit("change", { target: language }); await flush();
+  assert.equal(section.hidden, true);
+  assert.equal(mode.value, "hover", "switching languages preserves the user's Japanese preference");
 });
 
 test("popup does not overwrite settings when the initial read fails", async () => {

@@ -1,0 +1,13 @@
+{
+  "source": "JMdict / EDRDG",
+  "sourceUrl": "https://www.edrdg.org/jmdict/j_jmdict.html",
+  "distribution": "scriptin/jmdict-simplified",
+  "release": "3.6.2+20261019180022",
+  "url": "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.2%2B20261019180022/jmdict-eng-common-3.6.2%2B20261019180022.json.tgz",
+  "archiveSha256": "e4e88340e86470bec9ac1d2718d96d59af8491243827aab41ef99ae5fc269bbc",
+  "dataDate": "2026-10-19",
+  "entries": 22647,
+  "license": "CC-BY-SA-4.0",
+  "modification": "Common English entries only; compact keys; preserves reading and sense applicability; gzip",
+  "outputSha256": "54527d03c1f61ca54a1c32d046472db9b2b334117a6a52b7c568dddb58b5433e"
+}

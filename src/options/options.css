@@ -132,5 +132,15 @@ main { padding: 28px; }
 button:disabled, input:disabled, select:disabled { opacity: .55; cursor: wait; }
 .item strong, .item .ctx, .card p { overflow-wrap: anywhere; }
 .item small { color: #9fb0bd; }
+.jp-reading { color: #b8cec9; font-size: 13px; margin: 3px 0; }
+.source-forms { margin-top: 8px; }
+.source-forms summary { cursor: pointer; color: #2dd4bf; }
+.source-form { padding: 8px 10px; border-left: 2px solid #2a514c; margin: 8px 0; background: #101b22; }
+.source-form p { margin: 4px 0; }
+.source-form strong { color: #eef4f8; }
+.review-type { display: flex; align-items: center; gap: 8px; color: #c5d2dc; }
+.review-hint { font-size: 13px; }
+.card .card-question { color: #9fb0bd; font-size: 14px; }
+.card .card-answer { color: #2dd4bf; font-size: 24px; }
 [hidden] { display: none !important; }
 @media (max-width: 850px) { body { grid-template-columns: 160px 1fr; } main { padding: 18px; } .item { grid-template-columns: 1fr; gap: 6px; } .item menu { margin: 0; padding: 0; } }

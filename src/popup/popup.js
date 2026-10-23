@@ -1,4 +1,4 @@
-const fields = ["enabled", "learningLang", "nativeLang", "autoPause", "listenMode", "showNative", "nativeInteractive", "highlightRare", "fontSize", "playbackRate", "accent"];
+const fields = ["enabled", "learningLang", "nativeLang", "autoPause", "listenMode", "showNative", "nativeInteractive", "highlightRare", "fontSize", "playbackRate", "accent", "japaneseFurigana"];
 const statusBox = document.getElementById("operationStatus");
 const retryButton = document.getElementById("retrySettings");
 let loaded = false;
@@ -6,6 +6,11 @@ let saving = false;
 let pendingSettings = {};
 let changeVersion = 0;
 let loadVersion = 0;
+
+function updateLanguageControls() {
+  const isJapanese = document.getElementById("learningLang").value.toLowerCase().split("-")[0] === "ja";
+  document.getElementById("japaneseSettings").hidden = !isJapanese;
+}
 
 function setEnabled(enabled) {
   fields.forEach((key) => { document.getElementById(key).disabled = !enabled; });
@@ -31,6 +36,8 @@ async function load() {
       if (el.type === "checkbox") el.checked = !!settingsRes.settings[key];
       else if (settingsRes.settings[key] != null) el.value = settingsRes.settings[key];
     });
+    if (!["all", "unknown", "hover", "off"].includes(document.getElementById("japaneseFurigana").value)) document.getElementById("japaneseFurigana").value = "unknown";
+    updateLanguageControls();
     loaded = true;
     setEnabled(true);
     lmReportStatus(statusBox, "设置已读取", "success");
@@ -70,6 +77,7 @@ document.addEventListener("change", (event) => {
   const el = event.target;
   if (!loaded || !fields.includes(el.id)) return;
   pendingSettings[el.id] = el.type === "checkbox" ? el.checked : ["fontSize", "playbackRate"].includes(el.id) ? Number(el.value) : el.value;
+  if (el.id === "learningLang") updateLanguageControls();
   changeVersion += 1;
   save();
 });

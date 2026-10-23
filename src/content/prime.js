@@ -12,6 +12,7 @@
     lastTickMs: null,
     peeking: false,
     vocab: [],
+    known: {},
     token: 0,
     fullTrack: false,
     followTranscript: true,
@@ -83,7 +84,33 @@
       if (!word) return;
       ev.preventDefault();
       const cue = state.cues[Number(word.closest("[data-index]")?.dataset.index ?? state.index)];
-      saveWord(word.dataset.word, cue?.text, null, word.dataset.lang);
+      saveWord(word.dataset.word, cue?.text, null, word.dataset.lang, japaneseForWord(word));
+    });
+    root.addEventListener("contextmenu", (ev) => {
+      const word = ev.target.closest(".lm-word");
+      if (!word) return;
+      ev.preventDefault();
+      saveWord(word.dataset.word, state.cues[state.activeIndex]?.text, null, word.dataset.lang, japaneseForWord(word));
+    });
+    ui.phraseButton = document.createElement("button");
+    ui.phraseButton.type = "button";
+    ui.phraseButton.className = "lm-phrase-query";
+    ui.phraseButton.hidden = true;
+    ui.phraseButton.addEventListener("mousedown", (ev) => ev.preventDefault());
+    ui.phraseButton.addEventListener("click", () => {
+      const selection = ui.phraseSelection;
+      if (!selection?.anchor?.isConnected) return;
+      ui.phraseButton.hidden = true;
+      ui.phraseSelection = null;
+      ui.phraseActive = true;
+      showDict(selection.anchor, selection);
+    });
+    document.documentElement.appendChild(ui.phraseButton);
+    document.addEventListener("mouseup", onPhraseSelection);
+    document.addEventListener("mousedown", (ev) => {
+      if (ev.target === ui.phraseButton || ui.dict?.contains(ev.target)) return;
+      ui.phraseButton.hidden = true;
+      ui.phraseSelection = null;
     });
     document.addEventListener("mouseover", onHover);
     document.addEventListener("mouseout", onLeave);
@@ -213,7 +240,7 @@
       ui.rateVideo = video;
       ui.appliedRate = state.settings.playbackRate;
     }
-    if (!enabled) hideDict();
+    if (!enabled) { hideDict(); if (ui.phraseButton) ui.phraseButton.hidden = true; }
   }
 
   function requestTrack() {
@@ -342,12 +369,24 @@
   }
 
   function renderWords(target, text, lang, interactive = true) {
-    const key = JSON.stringify([text, lang, interactive]);
+    if (languageMatches(lang, "ja")) lang = "ja";
+    const key = JSON.stringify([text, lang, interactive, state.settings.japaneseFurigana]);
     if (target._lmWordsKey === key) return;
     target._lmWordsKey = key;
+    lmJapaneseClient.invalidate(target);
     target.replaceChildren();
     if (!interactive) {
       target.textContent = text || "";
+      return;
+    }
+    if (languageMatches(lang, "ja")) {
+      lmJapaneseClient.render(target, text, {
+        lang,
+        furigana: state.settings.japaneseFurigana,
+        known: (analysis) => lmJapaneseUi.isKnown(analysis, state.known),
+        saved: isSavedJapanese,
+        onAnalyzed: () => { syncWordMarkers(); followCurrentCue(); }
+      });
       return;
     }
     const saved = new Set(state.vocab.filter((item) => item.lang === lang).map((item) => item.word.trim().toLowerCase()));
@@ -368,13 +407,53 @@
     });
   }
 
+  function japaneseForWord(word) {
+    return languageMatches(word?.dataset.lang, "ja") ? lmJapaneseUi.tokenFrom(word) : undefined;
+  }
+
+  function isSavedJapanese(analysis) {
+    const normalize = (value) => String(value || "").normalize("NFKC").trim().toLowerCase();
+    const kana = (value) => normalize(value).replace(/[ァ-ヶ]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) - 0x60));
+    return state.vocab.some((item) => {
+      if (!languageMatches(item.lang, "ja")) return false;
+      if (!item.japanese) return [analysis.lemma, analysis.surface].some((word) => word && normalize(item.word) === normalize(word));
+      if (normalize(item.japanese.lemma || item.word) !== normalize(analysis.lemma || analysis.surface)) return false;
+      const storedReading = kana(item.japanese.baseReading || item.japanese.reading);
+      const currentReading = kana(analysis.baseReading || analysis.reading);
+      if ((storedReading || currentReading) && storedReading !== currentReading) return false;
+      return !item.japanese.entryId || !analysis.entryId || item.japanese.entryId === analysis.entryId;
+    });
+  }
+
+  function onPhraseSelection(ev) {
+    if (!state.settings.enabled || ev.target === ui.phraseButton || ui.dict?.contains(ev.target)) return;
+    const selected = [ui.subs, ui.panel].map((root) => lmJapaneseUi.selectionFrom(root, document.getSelection?.())).find((item) => item && item.isPhrase && languageMatches(item.lang, "ja"));
+    if (!selected) { ui.phraseButton.hidden = true; ui.phraseSelection = null; return; }
+    const selection = document.getSelection();
+    const node = selection.anchorNode?.nodeType === 1 ? selection.anchorNode : selection.anchorNode?.parentElement;
+    const anchor = node?.closest(".lm-word") || node?.querySelector(".lm-word");
+    if (!anchor || !isPrimeWord(anchor)) return;
+    hideDict();
+    const cue = state.cues[Number(anchor.closest("[data-index]")?.dataset.index ?? state.activeIndex)];
+    ui.phraseSelection = { ...selected, anchor, context: cue?.text || "" };
+    ui.phraseButton.textContent = `查询词组：${selected.surface.length > 20 ? selected.surface.slice(0, 20) + "…" : selected.surface}`;
+    ui.phraseButton.hidden = false;
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    const button = ui.phraseButton.getBoundingClientRect();
+    ui.phraseButton.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - button.width - 8))}px`;
+    ui.phraseButton.style.top = `${Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - button.height - 8))}px`;
+  }
+
   function syncWordMarkers() {
     const saved = new Set(state.vocab.map((item) => `${item.lang}:${item.word.trim().toLowerCase()}`));
     for (const root of [ui.subs, ui.panel]) {
       root?.querySelectorAll(".lm-word").forEach((word) => {
-        const isSaved = saved.has(`${word.dataset.lang}:${word.dataset.word.trim().toLowerCase()}`);
+        const japanese = japaneseForWord(word);
+        const isSaved = japanese ? isSavedJapanese(japanese) : saved.has(`${word.dataset.lang}:${word.dataset.word.trim().toLowerCase()}`);
         word.classList.toggle("lm-saved", isSaved);
-        word.classList.toggle("lm-rare", !isSaved && !!state.settings.highlightRare && !lmIsCommonWord(word.dataset.word, word.dataset.lang));
+        word.classList.toggle("lm-known", japanese && lmJapaneseUi.isKnown(japanese, state.known));
+        const rare = japanese ? japanese.common === false && !japanese.grammar : !lmIsCommonWord(word.dataset.word, word.dataset.lang);
+        word.classList.toggle("lm-rare", !isSaved && !!state.settings.highlightRare && rare);
       });
     }
   }
@@ -610,18 +689,20 @@
     ui.dict.style.top = `${Math.round(top)}px`;
   }
 
-  async function showDict(wordEl) {
+  async function showDict(wordEl, phrase = null) {
     if (!state.settings.enabled || !wordEl?.isConnected) return;
     hoverWord = wordEl;
     const token = ++lookupToken;
-    const word = wordEl.dataset.word;
+    const word = phrase?.surface || wordEl.dataset.word;
     const from = wordEl.dataset.lang || state.settings.learningLang;
+    const japaneseHint = languageMatches(from, "ja") ? phrase ? { surface: word, isPhrase: true } : japaneseForWord(wordEl) : undefined;
     ui.dict.classList.remove("lm-hidden");
     if (ui.dict.parentElement !== document.documentElement) document.documentElement.appendChild(ui.dict);
     ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-empty">正在查询…</div>`;
     placeDict(wordEl);
     const cue = state.cues[Number(wordEl.closest("[data-index]")?.dataset.index ?? state.index)];
-    const res = await send("LM_LOOKUP", { word, from, to: state.settings.nativeLang, context: cue?.text || "" });
+    const context = phrase?.context || cue?.text || "";
+    const res = await send("LM_LOOKUP", { word, from, to: state.settings.nativeLang, context, ...(japaneseHint ? { japanese: japaneseHint } : {}) });
     if (token !== lookupToken || hoverWord !== wordEl) return;
     if (!wordEl.isConnected) {
       hideDict();
@@ -629,13 +710,16 @@
     }
     if (!res.ok) {
       ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-vocab-status" role="alert" data-error="true">${escapeHtml(res.error || "查询失败，请重试")}</div><button type="button" class="lm-chip" data-retry>重新查询</button>`;
-      ui.dict.querySelector("[data-retry]").addEventListener("click", () => showDict(wordEl));
+      ui.dict.querySelector("[data-retry]").addEventListener("click", () => showDict(wordEl, phrase));
       placeDict(wordEl);
       return;
     }
     const data = res.result || { word, translation: "" };
+    const japanese = languageMatches(from, "ja") ? data.japanese || (phrase ? { surface: word, lemma: word, pos: "词组" } : japaneseHint) : undefined;
+    const persistentJapanese = lmJapaneseClient.persistent(japanese);
+    const saveForm = persistentJapanese?.lemma || word;
     const entries = (data.entries || []).map((entry) => {
-      const items = (entry.items || []).map((item, index) => `<div class="lm-entry"><div class="lm-gloss">${index + 1}. ${escapeHtml(item.gloss || item.definition || "")}</div>${item.example ? `<div class="lm-ex">例：${escapeHtml(item.example)}</div>` : ""}</div>`).join("");
+      const items = (entry.items || []).map((item, index) => `<div class="lm-entry"><div class="lm-gloss">${index + 1}. ${japanese && item.gloss ? "译文：" : ""}${escapeHtml(item.gloss || item.definition || "")}</div>${japanese && item.definition && item.gloss && item.definition !== item.gloss ? `<div class="lm-def">原文释义：${escapeHtml(item.definition)}</div>` : ""}${item.example ? `<div class="lm-ex">例：${escapeHtml(item.example)}</div>` : ""}</div>`).join("");
       return `<div class="lm-pos">${escapeHtml(entry.pos || "")}</div>${items}`;
     }).join("");
     ui.dict.innerHTML = `
@@ -644,8 +728,12 @@
         <button type="button" data-accent="us">美式<span class="lm-ipa">${escapeHtml(data.phoneticUs || data.phonetic || "")}</span></button>
         <button type="button" data-accent="uk">英式<span class="lm-ipa">${escapeHtml(data.phoneticUk || data.phonetic || "")}</span></button>
       </div>` : `<div class="lm-accents"><button type="button" data-accent="read">朗读<span class="lm-ipa">${escapeHtml(data.phonetic || "")}</span></button></div>`}
+      ${japanese ? lmJapaneseUi.cardHtml(japanese) : ""}
       ${entries || `<div class="lm-dict-trans">${escapeHtml(data.translation || "暂无释义")}</div>`}
-      <div class="lm-dict-context">${escapeHtml(cue?.text || "")}</div>
+      ${japanese && data.dictionarySource ? `<div class="lm-def">词典：${escapeHtml(data.dictionarySource)}${data.dictionaryDate ? ` · ${escapeHtml(data.dictionaryDate)}` : ""}</div>` : ""}
+      ${japanese && data.translationSource ? `<div class="lm-def">译文来源：${escapeHtml(data.translationSource)}</div>` : ""}
+      ${japanese && data.lookupNotice ? `<p class="lm-ja-note">${escapeHtml(data.lookupNotice)}</p>` : ""}
+      <div class="lm-dict-context">${escapeHtml(context)}</div>
       <button type="button" class="lm-dict-save">加入生词本</button>
     `;
     ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
@@ -665,22 +753,24 @@
       }));
     });
     ui.vocabButton = lmBindVocabButton(ui.dict.querySelector(".lm-dict-save"), {
-      word,
+      word: saveForm,
       lang: from,
+      japanese: persistentJapanese,
       send,
       createItem: () => ({
-        word,
+        word: saveForm,
         translation: data.translation || "",
         phonetic: data.phonetic || "",
         lang: from,
         nativeLang: state.settings.nativeLang,
-        context: cue?.text || "",
+        context,
+        ...(persistentJapanese ? { japanese: persistentJapanese } : {}),
         videoTitle: document.title,
         videoUrl: location.href,
         time: videoEl()?.currentTime || 0
       }),
       onChange: ({ saved, item }) => {
-        state.vocab = state.vocab.filter((row) => row.lang !== from || row.word.trim().toLowerCase() !== word.trim().toLowerCase());
+        state.vocab = state.vocab.filter((row) => row.id !== item?.id);
         if (saved) state.vocab.unshift(item);
         syncWordMarkers();
         if (hoverWord?.isConnected && dictOpen()) placeDict(hoverWord);
@@ -693,6 +783,7 @@
     clearTimeout(hoverTimer);
     clearTimeout(hideTimer);
     hoverWord = null;
+    ui.phraseActive = false;
     lookupToken += 1;
     ui.dict?.classList.add("lm-hidden");
   }
@@ -736,6 +827,7 @@
       clearTimeout(hideTimer);
       return;
     }
+    if (ui.phraseActive || ui.phraseSelection || ui.phraseButton?.contains(ev.target)) return;
     const word = ev.target.closest?.(".lm-word");
     if (isPrimeWord(word)) scheduleShow(word);
   }
@@ -753,24 +845,31 @@
   function onDictViewportChange(ev) {
     if (ev.type === "scroll" && ui.dict?.contains(ev.target)) return;
     hideDict();
+    if (ui.phraseButton) ui.phraseButton.hidden = true;
+    ui.phraseSelection = null;
   }
 
-  async function saveWord(word, context, lookup, lang = state.trackLang || state.settings.learningLang) {
+  async function saveWord(word, context, lookup, lang = state.trackLang || state.settings.learningLang, japaneseHint) {
+    if (languageMatches(lang, "ja")) lang = "ja";
     lmNotify("正在加入生词本…", "pending");
     const data = lookup || (await send("LM_LOOKUP", {
       word,
       from: lang,
       to: state.settings.nativeLang,
-      context: context || ""
+      context: context || "",
+      ...(japaneseHint ? { japanese: japaneseHint } : {})
     })).result || {};
+    const japanese = languageMatches(lang, "ja") ? lmJapaneseClient.persistent(data.japanese || japaneseHint) : undefined;
+    const saveForm = japanese?.lemma || word;
     const saved = await send("LM_VOCAB_ADD", {
       item: {
-        word,
+        word: saveForm,
         translation: data.translation || "",
         phonetic: data.phonetic || "",
         lang,
         nativeLang: state.settings.nativeLang,
         context: context || "",
+        ...(japanese ? { japanese } : {}),
         videoTitle: document.title,
         videoUrl: location.href,
         time: videoEl()?.currentTime || 0
@@ -781,7 +880,7 @@
       state.vocab.unshift(saved.item);
       syncWordMarkers();
       ui.vocabButton?.refresh();
-      lmNotify(`已加入生词本：${word}`);
+      lmNotify(`已加入生词本：${saveForm}`);
     } else {
       lmNotify(saved.error || "加入生词本失败，请重试", "error");
     }
@@ -847,8 +946,9 @@
       if (generation === settingsGeneration && response.ok) applySettings(response.settings);
       else if (!response.ok) lmNotify(response.error || "设置读取失败，请重试", "error");
     }
-    if (area === "local" && changes.vocab) {
-      state.vocab = changes.vocab.newValue || [];
+    if (area === "local" && (changes.vocab || changes.known)) {
+      if (changes.vocab) state.vocab = changes.vocab.newValue || [];
+      if (changes.known) state.known = changes.known.newValue || {};
       syncWordMarkers();
       ui.vocabButton?.refresh();
     }
@@ -857,7 +957,7 @@
   async function boot() {
     const [res, vocab] = await Promise.all([send("LM_GET_SETTINGS"), send("LM_VOCAB_LIST")]);
     if (res.settings) state.settings = lmMergeSettings(res.settings);
-    if (vocab.ok) state.vocab = vocab.vocab;
+    if (vocab.ok) { state.vocab = vocab.vocab; state.known = vocab.known || {}; }
     if (!res.ok) lmNotify(res.error || "设置读取失败，请刷新页面重试", "error");
     mount();
     setInterval(mount, 1000);

@@ -66,3 +66,11 @@
 .lm-feedback-toast { position: fixed; z-index: 2147483647; left: 50%; bottom: 32px; transform: translateX(-50%); max-width: min(600px, 90vw); padding: 12px 18px; border-radius: 10px; color: #eef4f8; background: #1a2935; border: 1px solid #2dd4bf; box-shadow: 0 5px 25px rgba(0,0,0,.35); font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; }
 .lm-feedback-toast[data-tone="error"] { border-color: #fb7185; }
 .lm-feedback-toast[hidden] { display: none !important; }
+#lm-reader-root .lm-ja-word { display: inline; }
+#lm-reader-root .lm-ja-ruby { ruby-align: center; }
+#lm-reader-root .lm-ja-ruby rt { font-size: .55em; line-height: 1; color: #b8cec9; user-select: none; pointer-events: none; }
+#lm-reader-root .lm-ja-word[data-furigana="hover"] rt { visibility: hidden; }
+#lm-reader-root .lm-ja-word[data-furigana="unknown"].lm-known rt { display: none; }
+#lm-reader-root .lm-ja-word[data-furigana="hover"]:hover rt { visibility: visible; }
+#lm-reader-root .lm-saved { color: #f4c56d; }
+#lm-reader-root .lm-reader-text:has(.lm-ja-ruby) { line-height: 2.2; }

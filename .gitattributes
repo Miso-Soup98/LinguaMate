@@ -1,0 +1,2 @@
+# Preserve upstream licence text and source formatting in vendored assets.
+src/vendor/** -whitespace

@@ -24,6 +24,18 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 完整 JSON 备份与恢复，保留词条、掌握记录和复习进度；支持合并或确认后替换
 - 任意网页：右键「用语伴查阅」或「用语伴阅读」
 
+### 日语学习（1.9.0）
+
+- 将学习语言设为「日本語」。YouTube、Prime Video 和网页阅读会在本地按词典分词，把「食べませんでした」「食べちゃった」等完整活用链连接到「食べる」，保留字幕原文。
+- 日语词卡显示辞书形、字幕形式、假名、词性和活用。可能、被动、尊敬等不能仅凭形式确定的解释会列出候选，需结合原句判断。IPADIC 没有提供可靠原形关系的独立词条会保留原词，不强行还原。
+- 注音可选「全部」「仅未掌握」「悬停显示」「关闭」，设置后即时生效。默认仅未掌握；加入生词本不会自动视为已经掌握。
+- 划选同一行中的词组后，点击「查询所选内容」查整段表达；假名注音不会混进查询。部分词语和整段短语会按选区保存。
+- 收藏以辞书形和读音关联活用，同形异读分开，收藏时保留最多 20 条词形与原句。已有词条和复习进度可继续使用，完整 JSON 备份包含这些日语字段。
+- 生词本可搜索假名和字幕里的活用；日语闪卡增加「看汉字回忆读音」「看活用回忆辞书形」两种题型，原有释义题型继续可用。
+- 词典包含 22,647 条 JMdict 常用词条（2026-10-19 快照），显示原始英文释义与单独标注的在线译文。它不是完整词典；专名、新词、部分口语和语境歧义仍可能需要整句查询。初次启用日语时会加载本地词典，之后缓存并复用；普通语言不加载日语词典。
+
+本地分析不发送字幕到词典供应方；查询中文释义、句子译文和在线朗读仍使用原有在线服务。词典、许可证及更新方法见 [第三方数据说明](THIRD_PARTY_NOTICES.md)。
+
 ### 范围
 
 - 用于 YouTube、Amazon Prime Video 和普通网页。在 Amazon 播放器里打开要学习的字幕后，语伴会自动接上。Netflix 字幕受版权和 DRM 保护，本插件不会拦截或复制。
@@ -83,6 +95,9 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Prime Video's fixed-height transcript follows the current subtitle; scroll up to pause following and click the follow button to resume
 - Prime Video dictionary cards wait for a brief hover, so passing over words does not flash cards
 - Reloads captions when you turn the player's captions on or off
+- Japanese uses bundled offline morphology, dictionary forms, kana readings and optional furigana on both video platforms and in the page reader; explicit range lookup keeps a whole phrase together
+- Japanese vocabulary groups inflections by lemma and reading, preserves source examples, and supports meaning, reading and inflection-to-lemma review modes
+- Structured Japanese definitions come from the bundled JMdict common subset; machine translations and ambiguous inflections are labelled separately. See [data sources and update procedure](THIRD_PARTY_NOTICES.md)
 - Vocabulary notebook, spaced-repetition flashcards, and CSV / Anki export
 - Complete JSON backup and restore preserve vocabulary, known words, and review progress, with merge or confirmed replacement
 - On any page, right-click to look up a selection or read it in LinguaMate

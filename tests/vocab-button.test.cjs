@@ -67,6 +67,7 @@ function harness(options = {}) {
     lang: options.lang || "en",
     send,
     createItem: options.createItem || (() => ({ translation: "你好", context: "Hello world" })),
+    japanese: options.japanese,
     onChange: options.onChange || ((change) => changes.push(change))
   });
   return {
@@ -325,4 +326,45 @@ test("a page callback failure cannot turn an acknowledged addition into a failur
   assert.equal(h.button.getAttribute("aria-pressed"), "true");
   assert.equal(h.status.textContent, "已加入生词本");
   assert.equal(h.status.dataset.error, "false");
+});
+
+test("Japanese inflected cards find a saved dictionary lemma and remove its exact ID", async () => {
+  const h = await loaded({ word: "食べなかった", lang: "ja", japanese: { lemma: "食べる", surface: "食べなかった", reading: "たべなかった", baseReading: "たべる" }, items: [{ id: "eat", word: "食べる", lang: "ja", japanese: { lemma: "食べる", baseReading: "タベル" } }] });
+  assert.equal(h.button.getAttribute("aria-pressed"), "true");
+  await h.button.click();
+  assert.equal(h.mutations()[0].payload.id, "eat");
+  assert.equal(h.items.length, 0);
+});
+
+test("Japanese cards match legacy regional language labels when removing a saved word", async () => {
+  const h = await loaded({ word: "食べた", lang: "ja", japanese: { lemma: "食べる", surface: "食べた", baseReading: "たべる" }, items: [{ id: "regional", word: "食べる", lang: "ja-JP", japanese: { lemma: "食べる", baseReading: "タベル" } }] });
+  assert.equal(h.button.getAttribute("aria-pressed"), "true");
+  await h.button.click();
+  assert.equal(h.mutations()[0].payload.id, "regional");
+  assert.equal(h.items.length, 0);
+});
+
+test("Japanese vocabulary buttons do not confuse homographs or kanji homophones", async () => {
+  const items = [
+    { id: "raw", word: "生", lang: "ja", japanese: { lemma: "生", baseReading: "なま" } },
+    { id: "bridge", word: "橋", lang: "ja", japanese: { lemma: "橋", baseReading: "はし" } }
+  ];
+  const life = await loaded({ word: "生", lang: "ja", japanese: { lemma: "生", baseReading: "せい" }, items });
+  assert.equal(life.button.getAttribute("aria-pressed"), "false");
+  const chopsticks = await loaded({ word: "箸", lang: "ja", japanese: { lemma: "箸", baseReading: "はし" }, items });
+  assert.equal(chopsticks.button.getAttribute("aria-pressed"), "false");
+});
+
+test("Japanese matching supports late analysis and missing dictionary entry IDs without dropping legacy cards", async () => {
+  let japanese = null;
+  const h = await loaded({ word: "食べました", lang: "ja", japanese: () => japanese, items: [{ id: "saved", word: "食べる", lang: "ja", japanese: { lemma: "食べる", baseReading: "たべる", entryId: "dictionary-1" } }] });
+  assert.equal(h.button.getAttribute("aria-pressed"), "false");
+  japanese = { lemma: "食べる", baseReading: "たべる", surface: "食べました" };
+  await h.binding.refresh();
+  assert.equal(h.button.getAttribute("aria-pressed"), "true");
+  h.items = [{ id: "legacy", word: "食べました", lang: "ja" }];
+  await h.binding.refresh();
+  assert.equal(h.button.getAttribute("aria-pressed"), "true");
+  await h.button.click();
+  assert.equal(h.mutations()[0].payload.id, "legacy");
 });

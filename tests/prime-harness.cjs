@@ -161,7 +161,7 @@ class Element extends Events {
   releasePointerCapture() {}
 }
 
-function primeHarness({ deferredLookup = false, deferredTranslation = false, deferredSettings = false, initialVocab = [], vocabErrors = {}, settings = {}, textTracks = [] } = {}) {
+function primeHarness({ deferredLookup = false, deferredTranslation = false, deferredSettings = false, initialVocab = [], vocabErrors = {}, settings = {}, textTracks = [], japaneseTokens, lookupResult } = {}) {
   const document = new Events();
   document.createElement = (tag) => new Element(tag, document);
   document.createTextNode = (text) => { const node = new Element("#text", document, 3); node._text = text; return node; };
@@ -209,7 +209,9 @@ function primeHarness({ deferredLookup = false, deferredTranslation = false, def
         requests.push(message);
         if (message.type === "LM_LOOKUP") {
           if (deferredLookup) pendingLookups.push({ message, callback });
-          else callback({ ok: true, result: { word: message.word, translation: `translation:${message.word}` } });
+          else callback({ ok: true, result: lookupResult || { word: message.word, translation: `translation:${message.word}` } });
+        } else if (message.type === "LM_JA_ANALYZE") {
+          callback(japaneseTokens ? { ok: true, tokens: typeof japaneseTokens === "function" ? japaneseTokens(message.text) : japaneseTokens } : { ok: false, error: "fixture_analysis_unavailable" });
         } else if (vocabErrors[message.type]) {
           callback({ ok: false, error: vocabErrors[message.type] });
         } else if (message.type === "LM_GET_SETTINGS") {
@@ -252,11 +254,11 @@ function primeHarness({ deferredLookup = false, deferredTranslation = false, def
     requestAnimationFrame: (fn) => setTimeout(fn, 16), cancelAnimationFrame: clearTimeout
   });
   const file = path.resolve(__dirname, "../src/content/prime.js");
-  for (const name of ["defaults.js", "frequency.js", "captions.js", "feedback.js", "vocab-button.js"]) {
+  for (const name of ["defaults.js", "frequency.js", "captions.js", "feedback.js", "japanese.js", "japanese-ui.js", "japanese-client.js", "vocab-button.js"]) {
     const helper = path.resolve(__dirname, "../src/shared", name);
     vm.runInContext(fs.readFileSync(helper, "utf8"), context, { filename: helper });
   }
-  const exports = ["state", "ui", "ensureUi", "mount", "renderCurrent", "renderPanel", "renderWords", "scrapeLiveCaption", "seekTo", "applyTrack", "onHover", "onLeave", "hideDict", "togglePanel", "setTranscriptFollow", "followCurrentCue", "onTranscriptScroll", "onDictViewportChange", "applySettings", "syncSettings", "currentIndex", "navigationIndex", "onTick", "onKeyDown", "onKeyUp", "translateCues", "syncTextTracks"];
+  const exports = ["state", "ui", "ensureUi", "mount", "renderCurrent", "renderPanel", "renderWords", "scrapeLiveCaption", "seekTo", "applyTrack", "onHover", "onLeave", "hideDict", "togglePanel", "setTranscriptFollow", "followCurrentCue", "onTranscriptScroll", "onDictViewportChange", "applySettings", "syncSettings", "currentIndex", "navigationIndex", "onTick", "onKeyDown", "onKeyUp", "translateCues", "syncTextTracks", "showDict", "saveWord", "isSavedJapanese", "onPhraseSelection", "syncWordMarkers"];
   const source = fs.readFileSync(file, "utf8").replace(/\s+boot\(\);\s*\}\)\(\);\s*$/, `\n globalThis.prime = { ${exports.map((name) => `${name}: typeof ${name} === 'undefined' ? undefined : ${name}`).join(",")} };\n})();`);
   vm.runInContext(source, context, { filename: file });
   if (!context.prime) throw new Error("Prime test harness could not export content-script functions");

@@ -1,0 +1,7 @@
+{
+  "package": "kuromoji",
+  "version": "0.1.2",
+  "url": "https://registry.npmjs.org/kuromoji/-/kuromoji-0.1.2.tgz",
+  "sha256": "ccf8778839df92ae3a3d64a93998ac92d1e92c7f73fe6193295a5258c98308b4",
+  "modification": "BrowserDictionaryLoader: XMLHttpRequest replaced with fetch for MV3 workers; no other changes"
+}

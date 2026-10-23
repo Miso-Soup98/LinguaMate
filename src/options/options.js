@@ -48,6 +48,17 @@ function review(item, grade) {
 }
 
 function langLabel(code) { return LM_LANGUAGES.find((item) => item.code === code)?.native || code || "其他"; }
+function isJapanese(item) { return /^ja(?:-|$)/i.test(item.lang || ""); }
+function searchKey(value) { return String(value || "").normalize("NFKC").toLowerCase().replace(/[ァ-ヶ]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60)); }
+function japaneseReading(item) { return item.japanese?.baseReading || item.japanese?.reading || ""; }
+function japaneseMeta(item) {
+  if (!isJapanese(item) || !item.japanese) return "";
+  return `<div class="jp-reading">${escapeHtml(japaneseReading(item))}</div><small>辞书形${item.japanese.pos ? ` · ${escapeHtml(item.japanese.pos)}` : ""}</small>`;
+}
+function japaneseSources(item) {
+  if (!isJapanese(item) || !Array.isArray(item.sourceForms) || !item.sourceForms.length) return "";
+  return `<details class="source-forms"><summary>遇到的词形与例句（${item.sourceForms.length}）</summary>${item.sourceForms.map((form) => `<div class="source-form"><strong>${escapeHtml(form.surface)}</strong>${form.reading ? ` <span>${escapeHtml(form.reading)}</span>` : ""}${form.conjugation ? ` · ${escapeHtml(form.conjugation)}` : ""}<p>${escapeHtml(form.context)}</p><small>${escapeHtml(form.videoTitle)}${Number.isFinite(form.time) ? ` · ${Math.floor(form.time / 60)}:${String(Math.floor(form.time % 60)).padStart(2, "0")}` : ""}</small></div>`).join("")}</details>`;
+}
 function fillLangSelect(select) {
   const langs = Array.from(new Set(vocab.map((item) => item.lang || "und")));
   const current = select.value || "all";
@@ -58,10 +69,10 @@ function fillLangSelect(select) {
 function renderVocab() {
   const langSelect = document.getElementById("langFilter");
   fillLangSelect(langSelect);
-  const q = ui.search.value.trim().toLowerCase();
+  const q = searchKey(ui.search.value.trim());
   const rows = vocab.filter((item) => (ui.statusFilter.value === "all" || item.status === ui.statusFilter.value)
     && (langSelect.value === "all" || (item.lang || "und") === langSelect.value)
-    && (!q || [item.word, item.translation, item.context, item.videoTitle].join(" ").toLowerCase().includes(q)));
+    && (!q || searchKey([item.word, item.translation, item.context, item.videoTitle, item.japanese?.lemma, item.japanese?.reading, item.japanese?.baseReading, ...(item.sourceForms || []).flatMap((form) => [form.surface, form.reading, form.context])].join(" ")).includes(q)));
   if (!rows.length) {
     ui.vocabList.innerHTML = `<p class="muted">${vocabLoaded ? "还没有匹配的生词。去视频里点词收藏即可。" : "尚未读取生词本，请重试。"}</p>`;
     return;
@@ -70,8 +81,8 @@ function renderVocab() {
   rows.forEach((item) => { const key = item.lang || "und"; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(item); });
   ui.vocabList.innerHTML = Array.from(groups.entries()).map(([code, items]) => `<h2>${escapeHtml(langLabel(code))}</h2>${items.map((item) => `
     <article class="item" data-id="${escapeHtml(item.id)}">
-      <div><strong>${escapeHtml(item.word)}</strong><div>${escapeHtml(item.translation)}</div><small>${item.status === "known" ? "已掌握" : "学习中"}</small></div>
-      <div class="ctx">${escapeHtml(item.context)}<br>${escapeHtml(item.videoTitle)}</div>
+      <div><strong>${escapeHtml(item.word)}</strong>${japaneseMeta(item)}<div>${escapeHtml(item.translation)}</div><small>${item.status === "known" ? "已掌握" : "学习中"}</small></div>
+      <div class="ctx">${escapeHtml(item.context)}<br>${escapeHtml(item.videoTitle)}${japaneseSources(item)}</div>
       <menu><button data-act="known" ${dataBusy || item.status === "known" ? "disabled" : ""}>${item.status === "known" ? "已掌握" : "掌握"}</button><button data-act="speak">朗读</button><button data-act="delete" ${dataBusy ? "disabled" : ""}>删除</button></menu>
     </article>`).join("")}`).join("");
 }
@@ -83,8 +94,21 @@ function renderCard() {
     ui.cardBox.innerHTML = `<p class="muted">${vocabLoaded ? `今天没有到期卡片。当前生词 ${vocab.length} 个。` : "尚未读取复习记录，请重试。"}</p>`;
     return;
   }
-  ui.cardBox.innerHTML = `<div class="card"><h2>${escapeHtml(currentCard.word)}</h2><p>${escapeHtml(currentCard.phonetic)}</p><p data-reveal hidden>${escapeHtml(currentCard.translation || "暂无释义")}<br>${escapeHtml(currentCard.context)}</p>
-    <div class="card-actions"><button data-act="reveal">显示释义</button><button class="again" data-grade="again" ${dataBusy ? "disabled" : ""}>再来</button><button class="good" data-grade="good" ${dataBusy ? "disabled" : ""}>记得</button><button class="easy" data-grade="easy" ${dataBusy ? "disabled" : ""}>简单</button></div></div>`;
+  const selectedType = document.getElementById("japaneseCardType")?.value || "meaning";
+  const reading = japaneseReading(currentCard);
+  const source = (currentCard.sourceForms || []).find((form) => form.surface && form.surface !== currentCard.word);
+  const surface = source?.surface || currentCard.japanese?.surface || "";
+  const canReading = isJapanese(currentCard) && !!reading;
+  const canLemma = isJapanese(currentCard) && !!surface && surface !== currentCard.word;
+  const type = selectedType === "reading" && canReading ? "reading" : selectedType === "lemma" && canLemma ? "lemma" : "meaning";
+  const prompt = type === "reading" ? "请回忆这个词的假名读音" : type === "lemma" ? "这个字幕词形的辞书形是什么？" : "请回忆词义";
+  const note = isJapanese(currentCard) && selectedType !== "meaning" && type === "meaning" ? `<p class="muted">${selectedType === "reading" ? "这个词尚无假名信息" : "这个词尚无活用例句"}，先按词义复习。</p>` : "";
+  const frontDetail = type === "meaning" ? (isJapanese(currentCard) ? reading : currentCard.phonetic) : type === "lemma" ? (source?.context || currentCard.context) : "";
+  const answer = type === "reading" ? reading : type === "lemma" ? `${currentCard.word}${reading ? `（${reading}）` : ""}` : currentCard.translation || "暂无释义";
+  const extraAnswer = type === "meaning" ? "" : currentCard.translation || "暂无释义";
+  const answerForm = type === "lemma" ? source?.conjugation || currentCard.japanese?.conjugation || "" : "";
+  ui.cardBox.innerHTML = `<div class="card"><p class="card-question">${prompt}</p><h2>${escapeHtml(type === "lemma" ? surface : currentCard.word)}</h2><p>${escapeHtml(frontDetail)}</p>${note}<div data-reveal hidden><p class="card-answer">${escapeHtml(answer)}</p>${extraAnswer ? `<p>${escapeHtml(extraAnswer)}</p>` : ""}${answerForm ? `<p>${escapeHtml(answerForm)}</p>` : ""}<p>${escapeHtml(currentCard.context)}</p></div>
+    <div class="card-actions"><button data-act="reveal">${type === "meaning" ? "显示释义" : "显示答案"}</button><button class="again" data-grade="again" ${dataBusy ? "disabled" : ""}>再来</button><button class="good" data-grade="good" ${dataBusy ? "disabled" : ""}>记得</button><button class="easy" data-grade="easy" ${dataBusy ? "disabled" : ""}>简单</button></div></div>`;
 }
 
 function renderData() { fillLangSelect(document.getElementById("cardLang")); renderVocab(); renderCard(); }
@@ -120,6 +144,7 @@ async function loadSettings() {
     return;
   }
   for (const name of ["learningLang", "nativeLang", "fontSize", "playbackRate"]) ui.form.elements[name].value = response.settings[name];
+  if (ui.form.elements.japaneseFurigana) ui.form.elements.japaneseFurigana.value = response.settings.japaneseFurigana || "unknown";
   for (const name of ["autoPause", "listenMode", "highlightRare", "hideYoutubeCaptions"]) ui.form.elements[name].checked = !!response.settings[name];
   settingsLoaded = true;
   setSettingsEnabled(true);
@@ -181,19 +206,20 @@ ui.search.addEventListener("input", renderVocab);
 ui.statusFilter.addEventListener("change", renderVocab);
 document.getElementById("langFilter").addEventListener("change", renderVocab);
 document.getElementById("cardLang").addEventListener("change", renderCard);
+document.getElementById("japaneseCardType")?.addEventListener("change", renderCard);
 document.getElementById("retryVocab").addEventListener("click", () => { if (!dataBusy) loadVocab(); });
 document.getElementById("retryLoadSettings").addEventListener("click", loadSettings);
 document.getElementById("retrySaveSettings").addEventListener("click", saveSettings);
 
 document.getElementById("exportCsv").addEventListener("click", () => {
   if (!vocabLoaded) return lmReportStatus(ui.status, "请先读取生词本再导出", "error");
-  download("linguamate-vocab.csv", ["word,translation,context,video,status", ...vocab.map((item) => [item.word, item.translation, item.context, item.videoTitle, item.status].map(csvEscape).join(","))].join("\n"));
+  download("linguamate-vocab.csv", ["word,translation,context,video,status,reading,sourceForms", ...vocab.map((item) => [item.word, item.translation, item.context, item.videoTitle, item.status, japaneseReading(item), (item.sourceForms || []).map((form) => form.surface).join(" / ")].map(csvEscape).join(","))].join("\n"));
   lmReportStatus(ui.status, "CSV 已生成，请在浏览器下载中查看", "success");
 });
 document.getElementById("exportAnki").addEventListener("click", () => {
   if (!vocabLoaded) return lmReportStatus(ui.status, "请先读取生词本再导出", "error");
   const clean = (value) => escapeHtml(value).replace(/[\t\r\n]+/g, " ");
-  download("linguamate-anki.txt", vocab.map((item) => `${clean(item.word)}\t${clean(item.translation)}<br>${clean(item.context)}`).join("\n"));
+  download("linguamate-anki.txt", vocab.map((item) => `${clean(item.word)}\t${japaneseReading(item) ? `${clean(japaneseReading(item))}<br>` : ""}${clean(item.translation)}<br>${clean(item.context)}`).join("\n"));
   lmReportStatus(ui.status, "Anki 文件已生成，请在浏览器下载中查看", "success");
 });
 
@@ -203,7 +229,7 @@ ui.vocabList.addEventListener("click", async (event) => {
   const item = vocab.find((entry) => entry.id === row?.dataset.id);
   if (!item || button.disabled) return;
   if (button.dataset.act === "speak") {
-    try { const utter = new SpeechSynthesisUtterance(item.word); utter.lang = item.lang || "en"; speechSynthesis.speak(utter); }
+    try { const utter = new SpeechSynthesisUtterance(isJapanese(item) ? japaneseReading(item) || item.word : item.word); utter.lang = item.lang || "en"; speechSynthesis.speak(utter); }
     catch (_) { lmReportStatus(ui.status, "朗读不可用，请检查浏览器语音设置", "error"); }
   } else if (button.dataset.act === "delete") await changeVocab("LM_VOCAB_DELETE", { id: item.id }, `已删除「${item.word}」`);
   else if (button.dataset.act === "known") await changeVocab("LM_VOCAB_UPDATE", { id: item.id, patch: { status: "known", due: Date.now() + 30 * 86400000 } }, `已将「${item.word}」标为掌握`);
@@ -220,6 +246,7 @@ ui.form.addEventListener("submit", (event) => {
   if (!settingsLoaded || !ui.form.reportValidity()) return;
   const settings = {};
   for (const name of ["learningLang", "nativeLang"]) settings[name] = ui.form.elements[name].value;
+  if (ui.form.elements.japaneseFurigana) settings.japaneseFurigana = ui.form.elements.japaneseFurigana.value;
   for (const name of ["fontSize", "playbackRate"]) settings[name] = Number(ui.form.elements[name].value);
   for (const name of ["autoPause", "listenMode", "highlightRare", "hideYoutubeCaptions"]) settings[name] = ui.form.elements[name].checked;
   pendingSettings = { settings, revision: ++settingsRevision };
@@ -234,7 +261,22 @@ function validateBackup(value) {
   for (const item of value.vocab) {
     if (!item || typeof item !== "object" || ["id", "word", "lang", "nativeLang"].some((key) => typeof item[key] !== "string" || !item[key].trim()) || !["learning", "known"].includes(item.status)) throw new Error("备份中存在无效生词，请重新选择完整备份");
     if (["time", "reps", "interval", "ease", "due", "createdAt", "updatedAt"].some((key) => !Number.isFinite(item[key]) || item[key] < 0) || !Number.isInteger(item.reps) || item.ease < 1) throw new Error("备份中的复习进度无效");
-    const key = `${item.lang.trim().toLowerCase()}:${item.word.normalize("NFC").trim().toLowerCase()}`;
+    let key = `${item.lang.trim().toLowerCase()}:${item.word.normalize("NFC").trim().toLowerCase()}`;
+    if (item.japanese !== undefined) {
+      if (!isJapanese(item) || !item.japanese || typeof item.japanese !== "object" || Array.isArray(item.japanese) || typeof item.japanese.lemma !== "string" || item.word !== item.japanese.lemma || !item.japanese.lemma.trim()) throw new Error("备份中的日语词条无效");
+      const limits = { lemma: 500, reading: 500, baseReading: 500, pos: 500, conjugation: 1000, surface: 500, entryId: 200 };
+      if (Object.entries(limits).some(([field, max]) => item.japanese[field] !== undefined && (typeof item.japanese[field] !== "string" || item.japanese[field].length > max))) throw new Error("备份中的日语读音或词形无效");
+      const reading = searchKey(japaneseReading(item)).trim();
+      const entryId = item.japanese.entryId || "";
+      if (reading || entryId) key += `|reading=${encodeURIComponent(reading)}|entry=${encodeURIComponent(entryId)}`;
+    }
+    if (item.sourceForms !== undefined) {
+      if (!Array.isArray(item.sourceForms) || item.sourceForms.length > 20) throw new Error("备份中的词形例句无效");
+      const limits = { surface: 500, reading: 500, conjugation: 1000, context: 100000, videoTitle: 5000, videoUrl: 10000 };
+      for (const form of item.sourceForms) {
+        if (!form || typeof form !== "object" || typeof form.surface !== "string" || !form.surface.trim() || Object.entries(limits).some(([field, max]) => form[field] !== undefined && (typeof form[field] !== "string" || form[field].length > max)) || (form.time !== undefined && (!Number.isFinite(form.time) || form.time < 0))) throw new Error("备份中的词形例句无效");
+      }
+    }
     if (ids.has(item.id) || words.has(key)) throw new Error("备份中有重复记录，请选择语伴导出的完整备份");
     ids.add(item.id);
     words.add(key);

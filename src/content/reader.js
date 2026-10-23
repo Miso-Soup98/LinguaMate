@@ -32,9 +32,9 @@
       return;
     }
     const settings = lmMergeSettings(settingsRes.settings);
-    const content =
+    const content = (
       (text && text.trim()) ||
-      (mode === "lm-lookup" ? window.getSelection().toString() : extractArticle());
+      (mode === "lm-lookup" ? window.getSelection().toString() : extractArticle())).slice(0, 8000);
     if (!content) { lmNotify("没有找到可阅读的文本，请先选择文字", "error"); return; }
 
     document.getElementById("lm-reader-root")?.remove();
@@ -58,7 +58,18 @@
     const status = root.querySelector(".lm-reader-status");
     const pendingWords = new Set();
     const savedWords = new Set();
+    const japaneseSaved = new Set();
     let wordVersion = 0;
+    const japanese = /^ja(?:-|$)/i.test(settings.learningLang);
+    const japaneseReady = japanese && typeof lmJapaneseClient !== "undefined" && typeof lmJapaneseUi !== "undefined";
+    const originalText = (node) => japaneseReady ? lmJapaneseUi.textWithoutReading(node) : node.textContent || "";
+    const termKey = (token) => typeof lmJapanese !== "undefined" ? lmJapanese.termKey(token) : lmJapaneseUi.identity(token);
+    const wordIdentity = (node) => japaneseReady ? termKey(lmJapaneseUi.tokenFrom(node)) : originalText(node).trim().toLocaleLowerCase(settings.learningLang);
+    function wordContext(node) {
+      let offset = 0;
+      for (const child of textBox.childNodes || textBox.children || []) { if (child === node) break; offset += originalText(child).length; }
+      return content.slice(Math.max(0, offset - 70), Math.min(content.length, offset + originalText(node).length + 110)).trim();
+    }
 
     const textBox = root.querySelector("#lm-reader-text");
     for (const part of tokenize(content, settings.learningLang)) {
@@ -70,6 +81,17 @@
       span.className = "lm-reader-word";
       span.textContent = part.segment;
       textBox.appendChild(span);
+    }
+    if (japaneseReady) {
+      const learning = await send("LM_VOCAB_LIST");
+      if (!root.isConnected) return;
+      const rows = learning.ok === true && Array.isArray(learning.vocab) ? learning.vocab.filter((item) => /^ja(?:-|$)/i.test(item.lang || "")) : [];
+      rows.forEach((item) => japaneseSaved.add(item.japanese ? termKey(item.japanese) : `ja:${item.word}`));
+      const known = new Set(rows.filter((item) => item.status === "known").map((item) => item.japanese ? termKey(item.japanese) : `ja:${item.word}`));
+      for (const [key, value] of Object.entries(learning.known || {})) if (value === true) known.add(key);
+      const markWords = () => textBox.querySelectorAll(".lm-word").forEach((span) => span.classList.add("lm-reader-word"));
+      lmJapaneseClient.render(textBox, content, { lang: settings.learningLang, furigana: settings.japaneseFurigana, saved: japaneseSaved, known, onAnalyzed: markWords });
+      markWords();
     }
 
     root.addEventListener("click", async (ev) => {
@@ -83,18 +105,23 @@
       }
       const word = ev.target.closest(".lm-reader-word");
       if (word) {
-        const key = word.textContent.trim().toLocaleLowerCase(settings.learningLang);
+        const surface = originalText(word).trim();
+        const key = wordIdentity(word);
+        const occurrence = japaneseReady ? `${key}|surface=${surface}` : key;
         if (pendingWords.has(key)) return;
-        if (savedWords.has(key)) { lmReportStatus(status, `「${word.textContent}」已加入生词本`, "success"); return; }
+        if (savedWords.has(occurrence)) { lmReportStatus(status, `「${surface}」已加入生词本`, "success"); return; }
+        const hint = japaneseReady ? lmJapaneseUi.tokenFrom(word) : undefined;
+        const context = wordContext(word);
         const requestVersion = ++wordVersion;
         pendingWords.add(key);
         word.setAttribute("aria-busy", "true");
-        lmReportStatus(status, `正在查询并收藏「${word.textContent}」…`, "pending");
+        lmReportStatus(status, `正在查询并收藏「${surface}」…`, "pending");
         const res = await send("LM_LOOKUP", {
-          word: word.textContent,
+          word: surface,
           from: settings.learningLang,
           to: settings.nativeLang,
-          context: content.slice(0, 180)
+          context,
+          ...(hint ? { japanese: hint } : {})
         });
         if (res.ok !== true || !res.result) {
           pendingWords.delete(key);
@@ -103,17 +130,19 @@
           return;
         }
         const data = res.result || {};
+        const analysis = japaneseReady ? lmJapaneseClient.persistent(data.japanese || hint) : undefined;
         if (!root.isConnected) { pendingWords.delete(key); return; }
         const saved = await send("LM_VOCAB_ADD", {
           item: {
-            word: word.textContent,
-            translation: data.translation,
-            phonetic: data.phonetic,
+            word: analysis?.lemma || surface,
+            translation: data.translation || "",
+            phonetic: data.phonetic || "",
             lang: settings.learningLang,
             nativeLang: settings.nativeLang,
-            context: content.slice(0, 180),
+            context,
             videoTitle: document.title,
-            videoUrl: location.href
+            videoUrl: location.href,
+            ...(analysis ? { japanese: { ...analysis, surface } } : {})
           }
         });
         pendingWords.delete(key);
@@ -123,18 +152,20 @@
           if (requestVersion === wordVersion) lmReportStatus(status, saved.error || "加入生词本失败，请点击单词重试", "error");
           return;
         }
-        savedWords.add(key);
+        savedWords.add(occurrence);
+        const savedKey = japaneseReady && saved.item.japanese ? termKey(saved.item.japanese) : key;
+        if (japaneseReady) japaneseSaved.add(savedKey);
         textBox.querySelectorAll(".lm-reader-word").forEach((span) => {
-          if (span.textContent.trim().toLocaleLowerCase(settings.learningLang) === key) span.classList.add("lm-reader-saved");
+          if (wordIdentity(span) === savedKey || wordIdentity(span) === key) span.classList.add("lm-reader-saved");
         });
-        if (requestVersion === wordVersion) lmReportStatus(status, `已将「${word.textContent}」加入生词本`, "success");
+        if (requestVersion === wordVersion) lmReportStatus(status, `已将「${surface}」加入生词本`, "success");
       }
     });
 
-    if (mode === "lm-lookup" && content.split(/\s+/).length <= 8) {
+    if (mode === "lm-lookup" && content.length <= 200 && content.split(/\s+/).length <= 8) {
       const res = await send("LM_LOOKUP", {
         word: content,
-        from: "auto",
+        from: japanese ? settings.learningLang : "auto",
         to: settings.nativeLang,
         context: ""
       });

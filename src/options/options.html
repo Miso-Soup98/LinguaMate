@@ -19,7 +19,7 @@
       <div class="operation-feedback"><p id="operationStatus" role="status" aria-live="polite"></p><button id="retryVocab" hidden>重试读取生词本</button></div>
       <section id="view-vocab">
         <header class="toolbar">
-          <input id="search" placeholder="搜索单词、释义或例句" />
+          <input id="search" placeholder="搜索单词、假名、遇到的词形或例句" aria-label="搜索生词本" />
           <select id="statusFilter">
             <option value="all">全部</option>
             <option value="learning">学习中</option>
@@ -48,7 +48,9 @@
           <select id="cardLang">
             <option value="all">全部语言</option>
           </select>
+          <label class="review-type">日语题型 <select id="japaneseCardType"><option value="meaning">词义</option><option value="reading">读音</option><option value="lemma">活用 → 原形</option></select></label>
         </header>
+        <p class="muted review-hint">日语可选择读音与原形练习，同一词条共用复习进度。其他语言继续按词义复习。</p>
         <div id="cardBox" class="card-box">
           <p class="muted">今天没有到期卡片。去 YouTube 收藏几个词再回来。</p>
         </div>
@@ -58,6 +60,7 @@
         <form id="settingsForm" class="settings">
           <label>学习语言 <select name="learningLang"></select></label>
           <label>母语 / 译文 <select name="nativeLang"></select></label>
+          <label>日语假名 <select name="japaneseFurigana"><option value="unknown">仅未掌握词显示</option><option value="all">全部显示</option><option value="hover">悬停显示</option><option value="off">关闭</option></select></label>
           <label>字幕字号 <input name="fontSize" type="number" min="16" max="40" /></label>
           <label>播放速度 <input name="playbackRate" type="number" min="0.5" max="2" step="0.25" /></label>
           <label class="check"><input name="autoPause" type="checkbox" /> 默认逐句暂停</label>
