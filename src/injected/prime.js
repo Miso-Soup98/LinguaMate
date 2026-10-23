@@ -55,7 +55,7 @@ function linguaMateInstallPrimeHook() {
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return false;
       for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
-        if (node.hidden || node.getAttribute("aria-hidden") === "true") return false;
+        if (node.hidden) return false;
         const style = getComputedStyle(node);
         if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0") return false;
       }

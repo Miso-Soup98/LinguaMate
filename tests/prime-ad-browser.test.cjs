@@ -120,7 +120,7 @@ check('an empty visible countdown template does not falsely signal advertising',
 marker.textContent='Ad';markerParent.style.opacity='0';at(9.2);
 check('an opacity-hidden ancestor does not falsely signal advertising',!p.state.adActive&&!p.hasAdIndicator());
 markerParent.style.opacity='';markerParent.setAttribute('aria-hidden','true');at(9.3);
-check('an aria-hidden ancestor does not falsely signal advertising',!p.state.adActive&&!p.hasAdIndicator());
+check('a visible ad timer still signals advertising when excluded from the accessibility tree',p.state.adActive&&p.hasAdIndicator());
 markerParent.removeAttribute('aria-hidden');markerParent.hidden=true;
 const hiddenVideo=document.createElement('video');hiddenVideo.style.cssText='width:3000px;height:2000px';markerParent.append(hiddenVideo);
 check('a larger hidden ad video is not selected as the content clock',p.videoEl()===v);hiddenVideo.remove();

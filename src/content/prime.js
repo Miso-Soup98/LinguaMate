@@ -31,7 +31,9 @@
   function elementVisible(element) {
     if (!element?.isConnected) return false;
     for (let node = element; node?.nodeType === 1; node = node.parentElement) {
-      if (node.hidden || node.getAttribute("hidden") !== null || node.getAttribute("aria-hidden") === "true") return false;
+      // Prime marks its rendered video aria-hidden to keep it out of the
+      // accessibility tree. That attribute does not change visual visibility.
+      if (node.hidden || node.getAttribute("hidden") !== null) return false;
       const style = typeof getComputedStyle === "function" ? getComputedStyle(node) : node.style;
       if (style?.display === "none" || style?.visibility === "hidden" || style?.visibility === "collapse" || style?.opacity === "0") return false;
     }
@@ -493,7 +495,10 @@
     clampPanelPosition();
     syncSettings();
     placeOverlay();
-    if (!state.cues.length && ui.panelBody && !ui.panelBody.childElementCount) renderPanel();
+    if (ui.panelBody && !ui.panelBody.childElementCount) {
+      renderPanel();
+      renderCurrent();
+    }
   }
 
   function escapeHtml(value) {
@@ -646,6 +651,9 @@
   }
 
   function renderPanel() {
+    // A programme track can arrive before the player adds a video element.
+    // Keep its data until mount creates the UI instead of aborting startup.
+    if (!ui.panelBody) return;
     if (!state.cues.length) {
       ui.panelBody.innerHTML = `<div class="lm-empty">${escapeHtml(state.statusText)}</div>`;
       ui.cueRows = [];
@@ -1048,7 +1056,7 @@
   }
 
   function onKeyDown(ev) {
-    if (!state.settings.enabled || ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target) || !state.cues.length) return;
+    if (!state.settings.enabled || !ui.subs || ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target) || !state.cues.length) return;
     contentTimeMs();
     if (state.adActive) return;
     const key = ev.key.toLowerCase();
