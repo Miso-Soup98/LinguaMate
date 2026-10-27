@@ -120,6 +120,8 @@
       if (/^(てる|でる)$/.test(basic)) add("ている的口语缩约");
       if (/^(しまう|ちゃう|じゃう|ちまう|じまう)$/.test(basic)) add(/^(ちゃう|じゃう|ちまう|じまう)$/.test(basic) ? "てしまう的口语缩约" : "完了 / 遗憾");
       if (/^(おく)$/.test(basic) && p.pos === "動詞") add("预先准备");
+      if (/^(いく|行く)$/.test(basic) && p.pos === "動詞" && parts[i - 1]?.surface === "て") add("～ていく（动作推进 / 今后持续）");
+      if (/^(くる|来る)$/.test(basic) && p.pos === "動詞" && /^(て|で)$/.test(parts[i - 1]?.surface)) add("～てくる（趋近 / 持续至今）");
       if (/^(みる)$/.test(basic) && p.pos === "動詞") add("尝试");
       if (/^(ん|の)$/.test(p.surface) && /^(名詞|助詞)$/.test(p.pos) && parts[i + 1] && /^(だ|です)$/.test(parts[i + 1].lemma)) add("解释语气（のだ / んだ）");
     }

@@ -2,6 +2,8 @@
 (() => {
   let tokenizerPromise;
   let dictionaryPromise;
+  let compoundsPromise;
+  const shards = new Map();
   const sentences = new Map();
   const baseReadings = new Map();
   const normalized = (text) => String(text || "").normalize("NFC");
@@ -42,12 +44,80 @@
     return dictionaryPromise;
   }
 
+  async function readDictionaryFile(name) {
+    const response = await fetch(chrome.runtime.getURL(`src/vendor/jmdict/extended/${name}.json.gz`));
+    if (!response.ok) throw new Error("japanese_dictionary_unavailable");
+    return new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).json();
+  }
+
+  function compounds() {
+    if (!compoundsPromise) compoundsPromise = readDictionaryFile("compounds")
+      .catch((error) => { compoundsPromise = null; throw error; });
+    return compoundsPromise;
+  }
+
+  function extendedDictionary(word) {
+    let hash = 0;
+    const key = indexKey(word);
+    for (let i = 0; i < key.length; i += 1) hash = (Math.imul(hash, 31) + key.charCodeAt(i)) >>> 0;
+    const bucket = String(hash % 32).padStart(2, "0");
+    if (!shards.has(bucket)) {
+      const pending = readDictionaryFile(bucket).then((data) => {
+        const index = new Map();
+        for (const entry of data.words) for (const form of new Set([...entry.k, ...entry.r.map((r) => r.t)].map(indexKey))) {
+          if (!index.has(form)) index.set(form, []);
+          index.get(form).push(entry);
+        }
+        return { index, tags: data.tags, date: data.date, extended: true };
+      }).catch((error) => { shards.delete(bucket); throw error; });
+      // Bound memory: the full dictionary stays compressed on disk. Only the
+      // few lookup buckets used most recently are retained in the worker.
+      put(shards, bucket, pending, 4);
+    }
+    return shards.get(bucket);
+  }
+
+  function joinCompounds(tokens, lexicon) {
+    if (!lexicon) return tokens;
+    const output = [];
+    const noun = (token) => token?.pos === "名詞" && /^[\p{Script=Han}々ヶヵ]+$/u.test(token.lemma);
+    for (let i = 0; i < tokens.length; i += 1) {
+      const first = tokens[i];
+      let best = null;
+      let form = first.lemma;
+      if (noun(first) && first.surface === first.lemma) {
+        for (let j = i + 1; j < Math.min(tokens.length, i + 6); j += 1) {
+          const last = tokens[j];
+          if (!noun(last) || tokens[j - 1].end !== last.start || form.length + last.lemma.length > 16) break;
+          form += last.lemma;
+          const readings = lexicon[form];
+          if (readings?.length) {
+            const parts = tokens.slice(i, j + 1);
+            const inferred = parts.map((part) => part.baseReading).join("");
+            const possible = readings.map(lmJapanese.toHiragana);
+            const reading = possible.includes(inferred) ? inferred : possible.length === 1 ? possible[0] : "";
+            const surface = parts.map((part) => part.surface).join("");
+            const tail = last.reading.startsWith(last.baseReading) ? last.reading.slice(last.baseReading.length) : "";
+            best = { end: j, token: { ...last, surface, text: surface, lemma: form,
+              reading: reading ? reading + tail : "", baseReading: reading, start: first.start,
+              parts: parts.flatMap((part) => part.parts), compound: true, common: false } };
+            best.token.termKey = lmJapanese.termKey(best.token);
+          }
+          if (last.surface !== last.lemma) break;
+        }
+      }
+      output.push(best ? best.token : first);
+      if (best) i = best.end;
+    }
+    return output;
+  }
+
   async function analyze(text) {
     if (typeof text !== "string" || text.length > 12000) throw new Error("invalid_japanese_text");
     if (!text) return [];
     if (sentences.has(text)) return sentences.get(text);
     const pending = (async () => {
-      const [analyzer, dict] = await Promise.all([tokenizer(), dictionary().catch(() => null)]);
+      const [analyzer, dict, lexicon] = await Promise.all([tokenizer(), dictionary().catch(() => null), compounds().catch(() => null)]);
       const raw = analyzer.tokenize(text);
       for (const token of raw) {
         const lemma = token.basic_form;
@@ -63,7 +133,7 @@
         }
         token.basic_reading = baseReadings.get(lemma);
       }
-      return lmJapanese.analyzeTokens(raw, text).map((token) => ({
+      return joinCompounds(lmJapanese.analyzeTokens(raw, text), lexicon).map((token) => ({
         ...token,
         common: dict ? lexicalEntries(dict, token).entries.length > 0 : null
       }));
@@ -144,12 +214,39 @@
     Promise.resolve(promise).then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(fallback); });
   });
 
+  function grammarNotes(analysis) {
+    const notes = [];
+    if (analysis.pos === "助詞") {
+      const particles = {
+        "から": "から：可表示起点（从……）、来源，也可接在句子后说明原因（因为……）。名词＋から不应和前面的名词当作一个词。",
+        "まで": "まで：表示时间、地点或范围的终点，常译为“到……为止”。",
+        "を": "を：通常标记动作的对象，也可表示经过、离开的地点；读作「お」。",
+        "に": "に：可标记时间、到达点、对象、存在地点或变化结果，需看前后谓语。",
+        "で": "で：可表示动作发生地点、工具、方式、材料或原因。",
+        "は": "は：提示话题或对比，作为助词读作「わ」。",
+        "が": "が：可标记主语，也可连接句子表示转折或铺垫。",
+        "の": "の：可连接名词表示所属、修饰，也可把前面的动作或句子名词化。",
+        "と": "と：可表示并列、共同参与者、引用内容；接句子时也可表示条件。"
+      };
+      if (particles[analysis.lemma]) notes.push(particles[analysis.lemma]);
+    }
+    const surface = analysis.surface;
+    if (/(?:て|で)(?:いき|行き|いく|行く|いっ|行っ)/.test(surface)) notes.push("～ていく：表示动作向前推进、离开当前地点，或变化从现在持续下去；具体解释取决于原句。見る＋ていく在讲解中常表示“接下来看看／逐步来看”。");
+    if (/(?:て|で)(?:き|来|くる)/.test(surface)) notes.push("～てくる：表示朝当前地点移动，或变化持续到现在；不能只按独立动词“来”翻译。");
+    if (analysis.conjugation?.labels?.includes("礼貌体")) notes.push("ます／です是礼貌表达；查词和复习使用辞书形，字幕保留实际活用。");
+    return notes;
+  }
+
   async function lookup(word, to, context, hint) {
     const surface = normalized(word).trim();
     if (!surface || surface.length > 500) throw new Error("invalid_word");
     const analysis = await resolveAnalysis(surface, String(context || ""), hint);
-    const dict = await dictionary().catch(() => null);
-    const lexical = dict ? lexicalEntries(dict, analysis) : { entries: [], headword: analysis.lemma };
+    let dict = await dictionary().catch(() => null);
+    let lexical = dict ? lexicalEntries(dict, analysis) : { entries: [], headword: analysis.lemma };
+    if (!lexical.entries.length) {
+      const extended = await extendedDictionary(analysis.lemma).catch(() => null);
+      if (extended) { dict = extended; lexical = lexicalEntries(dict, analysis); }
+    }
     const records = lexical.entries;
     const chosen = records.slice(0, 4);
     const entries = chosen.flatMap((record) => record.s.slice(0, 3).map((sense) => ({
@@ -162,7 +259,7 @@
     // labelled separately and never treated as a structured dictionary entry.
     const definitions = entries.map((entry) => entry.items[0].definition);
     const [translated, glosses] = await Promise.all([
-      bounded(translateText(analysis.lemma, "ja", to), { text: "" }),
+      definitions.length ? Promise.resolve({ text: "" }) : bounded(translateText(analysis.surface, "ja", to), { text: "" }),
       /^en(?:-|$)/i.test(to) ? Promise.resolve(definitions) : bounded(translateLines(definitions, "en", to), [])
     ]);
     entries.forEach((entry, index) => { entry.items[0].gloss = glosses[index] || ""; });
@@ -171,17 +268,19 @@
       analysis.baseReading = lmJapanese.toHiragana(chosen[0].r[0].t) + (lexical.headword !== analysis.lemma ? "する" : "");
     }
     analysis.termKey = lmJapanese.termKey(analysis);
+    analysis.grammarNotes = grammarNotes(analysis);
+    const dictionaryTranslation = glosses[0] || definitions[0] || "";
     return {
-      word: surface, translation: translated.text || definitions[0] || "", phonetic: analysis.baseReading || analysis.reading,
+      word: surface, translation: dictionaryTranslation || translated.text || "", phonetic: analysis.baseReading || analysis.reading,
       senses: [], entries, japanese: analysis, context: context || "",
-      dictionarySource: dict ? "JMdict（常用词） / EDRDG" : "", dictionaryUrl: "https://www.edrdg.org/jmdict/j_jmdict.html",
+      dictionarySource: dict ? "JMdict / EDRDG" : "", dictionaryUrl: "https://www.edrdg.org/jmdict/j_jmdict.html",
       dictionaryDate: dict ? dict.date : "", dictionaryAvailable: Boolean(dict),
       dictionaryHeadword: lexical.headword,
       dictionaryMatched: records.length > 0, dictionaryAlternatives: Math.max(0, records.length - chosen.length),
-      translationSource: translated.text ? "在线翻译" : "",
+      translationSource: definitions.length ? (/^en(?:-|$)/i.test(to) || !glosses[0] ? "词典原始英文释义" : "词典释义的机器翻译") : translated.text ? "在线翻译" : "",
       lookupNotice: !dict ? (translated.text ? "本地词典暂时无法载入；目前仅显示在线译文，可刷新页面后重试。" : "本地词典暂时无法载入，在线翻译也未返回结果，请刷新页面后重试。") : records.length ?
         (lexical.headword !== analysis.lemma ? `「${analysis.lemma}」参考「${lexical.headword}」的する用法。` : "") + "词典列出可能义项，请结合字幕语境判断。" :
-        translated.text ? "常用词词典未收录此项；译文来自在线翻译，可能需要结合语境核实。" : "常用词词典未收录此项，在线翻译暂不可用，请稍后重试。"
+        translated.text ? "未找到匹配词条；当前仅有机器译文，不代表它是正确的日语词。自动字幕可能识别错字或漏词，请结合整句核对，必要时校正原文。" : "未找到匹配词条，在线翻译暂不可用。请核对原字幕是否识别有误，也可划选完整词组查询。"
     };
   }
 

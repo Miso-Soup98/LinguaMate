@@ -48,7 +48,8 @@ test("lookup uses the contextual dictionary form, real dictionary meanings and b
   assert.equal(card.word, "来なかった");
   assert.equal(card.japanese.lemma, "来る");
   assert.equal(card.japanese.baseReading, "くる");
-  assert.match(card.translation, /来る/);
+  assert.match(card.translation, /译义:to come/);
+  assert.equal(card.translationSource, "词典释义的机器翻译");
   assert.ok(card.entries.some((entry) => /come/.test(entry.items[0].definition)));
   assert.ok(card.entries.every((entry) => entry.items[0].gloss.startsWith("译义:")));
   assert.match(card.dictionarySource, /JMdict/);
@@ -145,4 +146,47 @@ test("oversized messages are rejected before any dictionary allocation", async (
   await assert.rejects(service.analyze("猫".repeat(12001)), /invalid_japanese_text/);
   await assert.rejects(service.lookup("猫".repeat(501), "en", "", {}), /invalid_word/);
   assert.equal(reads.length, 0);
+});
+
+test("exact compounds and expanded dictionary cover weather terms without correcting ASR guesses", async () => {
+  const { service, reads } = harness();
+  const text = "気象衛星から見ていきます。最大瞬間風速と海面水温。";
+  const tokens = await service.analyze(text);
+  assert.equal(tokens.map((token) => token.surface).join(""), text);
+  const satellite = tokens.find((token) => token.surface === "気象衛星");
+  assert.ok(satellite, JSON.stringify(tokens.map(t => [t.surface, t.lemma])));
+  assert.equal(satellite.baseReading, "きしょうえいせい");
+  assert.ok(tokens.some((token) => token.surface === "最大瞬間風速"));
+  assert.equal(reads.filter((url) => /extended\/\d+/.test(url)).length, 0, "analysis does not decompress lookup shards");
+  const card = await service.lookup("気象衛星", "en", text);
+  assert.equal(card.dictionaryMatched, true);
+  assert.match(card.translation, /weather satellite|meteorological satellite/);
+  assert.equal(reads.filter((url) => /extended\/\d+/.test(url)).length, 1);
+  await service.lookup("気象衛星", "en", text);
+  assert.equal(reads.filter((url) => /extended\/\d+/.test(url)).length, 1, "same bucket is reused");
+  const original = "気少衛生ひりから見ていきます。";
+  assert.equal((await service.analyze(original)).map(t => t.surface).join(""), original, "never silently replaces source spelling");
+  const wrong = await service.lookup("気少衛生ひり", "zh-CN", original, { isPhrase: true });
+  assert.equal(wrong.dictionaryMatched, false);
+  assert.match(wrong.lookupNotice, /不代表它是正确的日语词/);
+});
+
+test("compound merging respects particles, spaces, original offsets and copula suffixes", async () => {
+  const { service } = harness();
+  for (const text of ["気象の衛星", "気象 衛星", "気象衛星です。", "😀気象衛星を使う。", "生物学と生き物"]) {
+    const tokens = await service.analyze(text);
+    assert.equal(tokens.map(t => t.surface).join(""), text);
+    for (const token of tokens) assert.equal(text.slice(token.start, token.end), token.surface);
+    if (text.includes("の衛星") || text.includes(" 衛星")) assert.ok(!tokens.some(t => t.lemma === "気象衛星"));
+  }
+});
+
+test("particles and auxiliary verbs explain their grammatical function", async () => {
+  const { service } = harness();
+  const particle = await service.lookup("から", "zh-CN", "気象衛星から見ていきます。");
+  assert.ok(particle.japanese.grammarNotes.some(note => /起点/.test(note)));
+  const verb = await service.lookup("見ていきます", "zh-CN", "これから見ていきます。");
+  assert.equal(verb.japanese.lemma, "見る");
+  assert.ok(verb.japanese.grammarNotes.some(note => /逐步来看/.test(note)));
+  assert.ok(verb.japanese.conjugation.labels.some(note => /ていく/.test(note)));
 });

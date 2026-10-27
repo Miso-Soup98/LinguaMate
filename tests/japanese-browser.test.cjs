@@ -51,6 +51,9 @@ test("real Chrome worker imports the shipping backend and reads bundled dictiona
       check(exported.ok&&exported.data.vocab.length===1&&exported.data.vocab[0].status==='known','round-trip Japanese progress');
       const range=await send({type:'LM_LOOKUP',word:'行かなければならない',from:'ja',to:'en',japanese:{isPhrase:true}});
       check(range.ok&&range.result.japanese.lemma==='行かなければならない'&&range.result.japanese.isPhrase,'phrase identity');
+      const satellite=await send({type:'LM_LOOKUP',word:'気象衛星',from:'ja',to:'en',context:'気象衛星から見ていきます。'});
+      check(satellite.ok&&satellite.result.dictionaryMatched&&/satellite/.test(satellite.result.translation),'extended dictionary loads on demand in Chrome worker');
+      check(satellite.result.japanese.baseReading==='きしょうえいせい','compound reading in real browser');
       worker.terminate();document.title='RESULT:'+btoa(JSON.stringify({ok:true,checks:8}));
     }catch(error){document.title='RESULT:'+btoa(JSON.stringify({error:error.stack}));}finally{fetch('/finish');}})();
   </script>`;

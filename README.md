@@ -27,7 +27,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 完整 JSON 备份与恢复，保留词条、掌握记录和复习进度；支持合并或确认后替换
 - 任意网页：右键「用语伴查阅」或「用语伴阅读」
 
-### 日语学习（1.9.0）
+### 日语学习（1.10.0）
 
 - 将学习语言设为「日本語」。YouTube、Prime Video 和网页阅读会在本地按词典分词，把「食べませんでした」「食べちゃった」等完整活用链连接到「食べる」，保留字幕原文。
 - 日语词卡显示辞书形、字幕形式、假名、词性和活用。可能、被动、尊敬等不能仅凭形式确定的解释会列出候选，需结合原句判断。IPADIC 没有提供可靠原形关系的独立词条会保留原词，不强行还原。
@@ -35,7 +35,11 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 划选同一行中的词组后，点击「查询所选内容」查整段表达；假名注音不会混进查询。部分词语和整段短语会按选区保存。
 - 收藏以辞书形和读音关联活用，同形异读分开，收藏时保留最多 20 条词形与原句。已有词条和复习进度可继续使用，完整 JSON 备份包含这些日语字段。
 - 生词本可搜索假名和字幕里的活用；日语闪卡增加「看汉字回忆读音」「看活用回忆辞书形」两种题型，原有释义题型继续可用。
-- 词典包含 22,647 条 JMdict 常用词条（2026-10-19 快照），显示原始英文释义与单独标注的在线译文。它不是完整词典；专名、新词、部分口语和语境歧义仍可能需要整句查询。初次启用日语时会加载本地词典，之后缓存并复用；普通语言不加载日语词典。
+- 日语自动字幕会清理妨碍分词的空格，连接被换行拆开的活用；有词典依据的汉字复合名词（如「気象衛星」「最大瞬間風速」）按完整词查询。原文中的错字不会被悄悄替换。
+- YouTube 没有对应母语字幕时，日语按当前完整字幕逐句翻译，只请求可见行和播放位置附近的句子，同时最多两个请求。已有母语轨道按时间重叠完整对齐，修复长段日语只显示中间一小句译文的问题。
+- YouTube 日语字幕显示来源提示，每行提供「校正原文」和「整句重译」。修改后会重新分词、注音和翻译，可查看或恢复原字幕。校正只保留在当前页面会话；刷新页面后重新读取平台原字幕。
+- 词卡优先显示词典义项的翻译，保留原始英文释义；助词和「～ていく／～てくる」等表达增加中文用法说明。没有匹配词条时会提示核对自动字幕，不把机器译文当作已确认词义。
+- 词典扩充至 218,930 条 JMdict 英文词条（2026-10-19 快照）；常用词仍单独用于词频标记。扩充释义分为 32 个本地文件，查词时按需读取，最多缓存 4 份；普通语言不加载日语词典。专名、新词和语音识别错误仍可能查不到，机器翻译也不保证能还原缺失的原话。
 
 本地分析不发送字幕到词典供应方；查询中文释义、句子译文和在线朗读仍使用原有在线服务。词典、许可证及更新方法见 [第三方数据说明](THIRD_PARTY_NOTICES.md)。
 
@@ -103,7 +107,8 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Reloads captions when you turn the player's captions on or off
 - Japanese uses bundled offline morphology, dictionary forms, kana readings and optional furigana on both video platforms and in the page reader; explicit range lookup keeps a whole phrase together
 - Japanese vocabulary groups inflections by lemma and reading, preserves source examples, and supports meaning, reading and inflection-to-lemma review modes
-- Structured Japanese definitions come from the bundled JMdict common subset; machine translations and ambiguous inflections are labelled separately. See [data sources and update procedure](THIRD_PARTY_NOTICES.md)
+- Japanese definitions use 218,930 bundled JMdict entries, with full-dictionary supplements loaded in bounded shards. Exact written noun compounds, particles and auxiliary expressions receive additional support. Machine translations and ambiguous inflections are labelled separately. See [data sources and update procedure](THIRD_PARTY_NOTICES.md)
+- YouTube Japanese captions use complete-cue translations when native-language captions are absent. Existing tracks retain every overlapping translation instead of a single midpoint match. Automatic captions are labelled, and each Japanese row can be corrected, retranslated or restored within the current page session (1.10.0)
 - Vocabulary notebook, spaced-repetition flashcards, and CSV / Anki export
 - Complete JSON backup and restore preserve vocabulary, known words, and review progress, with merge or confirmed replacement
 - On any page, right-click to look up a selection or read it in LinguaMate

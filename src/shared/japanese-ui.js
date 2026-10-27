@@ -105,7 +105,8 @@ var lmJapaneseUi = (() => {
     const alternatives = candidates.length > 1 ? `<div class="lm-ja-candidates"><div class="lm-pos">可能的词条 / 活用</div><ul>${candidates.map((item) => `<li>${escape([text(item.lemma) || text(item.word), reading(item.baseReading) || reading(item.reading), display(item.pos), display(item.conjugation), text(item.interpretation)].filter(Boolean).join(" · "))}</li>`).join("")}</ul></div>` : "";
     const uncertain = analysis.ambiguous === true || analysis.conjugation?.ambiguous === true || candidates.length > 1;
     const note = uncertain ? '<p class="lm-ja-note">存在多个候选，请结合原句确认；当前结果未自动判定语境含义。</p>' : "";
-    return rows.length || alternatives ? `<section class="lm-ja-analysis" lang="ja"><dl>${rows.join("")}</dl>${alternatives}${note}</section>` : "";
+    const grammar = Array.isArray(analysis.grammarNotes) ? analysis.grammarNotes.map((value) => `<p class="lm-ja-note">${escape(value)}</p>`).join("") : "";
+    return rows.length || alternatives || grammar ? `<section class="lm-ja-analysis" lang="ja"><dl>${rows.join("")}</dl>${grammar}${alternatives}${note}</section>` : "";
   }
 
   function textWithoutReading(node) {

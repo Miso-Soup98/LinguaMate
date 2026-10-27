@@ -43,6 +43,10 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       window.chrome={runtime:{id:'ja-browser-fixture',onInstalled:{addListener(){}},onMessage:{addListener(){}},sendMessage(message,callback){
         fixtureMessages.push(structuredClone(message));
         if(message.type==='LM_JA_ANALYZE')return callback({ok:true,tokens:fixtureJapaneseTokens(message.text)});
+        if(message.type==='LM_TRANSLATE'){
+          if(window.fixtureHoldTranslation){(window.fixtureTranslationCallbacks||=[]).push(()=>callback({ok:true,result:{text:'整句译文：'+message.text}}));return;}
+          return callback(window.fixtureTranslationFailure?{ok:false,error:'fixture offline'}:{ok:true,result:{text:'整句译文：'+message.text}});
+        }
         if(message.type==='LM_LOOKUP'){
           const japanese=message.from==='ja'?(message.isPhrase?{surface:message.word,lemma:message.word,pos:'短语 / 选区',isPhrase:true}:({...message.japanese,entryId:'10001'})):undefined;
           const reply={ok:true,result:{word:message.word,translation:'测试释义',japanese,entries:[],dictionarySource:'JMdict / EDRDG',dictionaryDate:'2026-10-19',translationSource:'在线翻译',lookupNotice:'可能义项请结合语境判断'}};
@@ -53,7 +57,7 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
         handleMessage(message).then(callback,error=>callback({ok:false,error:String(error.message)}));
       }},storage:{sync:area('sync'),local:area('local'),onChanged:{addListener(){}}},contextMenus:{onClicked:{addListener(){}}}};
     `;
-    const expose = "window.fixture={state,ui,ensureUi,renderWords,renderTranscript,renderCurrent,showDict,saveWord,uniqueWords,renderLearnTab,syncWordMarkers,hideDict,updatePhraseQuery,applyStoredState};";
+    const expose = "window.fixture={state,ui,ensureUi,renderWords,renderTranscript,renderCurrent,showDict,saveWord,uniqueWords,renderLearnTab,syncWordMarkers,hideDict,updatePhraseQuery,applyStoredState,queueTranslation,editCaption,alignCues,parseEvents};";
     const content = source("src/content/youtube.js").replace('  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);\n  else boot();', expose);
     const checks = `
       const y=fixture,v=document.querySelector('video');
@@ -117,6 +121,38 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       y.state.vocab=[{id:'saved-only',word:'猫',lang:'ja',japanese:{lemma:'猫',baseReading:'ねこ',surface:'猫'}}];y.state.known={};
       await y.renderLearnTab();
       fixtureCheck('Coverage requires a known mark, including for short or saved Japanese words',y.ui.panelBody.querySelector('b').textContent==='0%');
+      y.state.tab='subs';y.state.learningTrack={kind:'asr',languageCode:'ja'};
+      y.state.cues=[{start:0,end:9000,text:'現在の台風の様子を気少衛生ひりから見ていきます。'}];
+      y.state.nativeCues=[];y.renderTranscript();y.renderCurrent();
+      fixtureCheck('Automatic source is identified without inventing a corrected transcript',y.ui.panelBody.querySelector('.lm-caption-notice').textContent.includes('日语自动字幕')&&y.state.cues[0].text.includes('気少衛生'));
+      const timeBefore=v.currentTime;
+      y.ui.panelBody.querySelector('[data-caption-action="edit"]').click();
+      const editor=y.ui.panelBody.querySelector('.lm-caption-editor'),input=editor.querySelector('textarea');
+      fixtureCheck('Correction opens an accessible editor without seeking the video',input.value===y.state.cues[0].text&&v.currentTime===timeBefore&&input.getAttribute('aria-label')==='校正日语原文');
+      input.value='現在の台風の様子を気象衛星ひまわりから見ていきます。';
+      editor.requestSubmit();await settleFixture();
+      fixtureCheck('Correction reanalyses and translates the complete corrected source',y.state.cues[0].text===input.value&&fixtureMessages.filter(m=>m.type==='LM_JA_ANALYZE').some(m=>m.text===input.value)&&fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').at(-1).text===input.value);
+      fixtureCheck('New sentence translation reaches both subtitle and transcript',y.ui.nativeLine.textContent==='整句译文：'+input.value&&y.ui.panelBody.querySelector('.lm-cue-native').textContent===y.ui.nativeLine.textContent);
+      fixtureCheck('Original source is retained visibly for comparison',y.ui.panelBody.querySelector('.lm-caption-original p').textContent.includes('気少衛生ひり'));
+      y.ui.panelBody.querySelector('.lm-caption-original button').click();await settleFixture();
+      fixtureCheck('Undo restores and retranslates the original subtitle',y.state.cues[0].text.includes('気少衛生ひり')&&!y.state.cues[0].originalText&&y.ui.nativeLine.textContent.includes('気少衛生ひり'));
+      window.fixtureTranslationFailure=true;y.state.nativeCues=[];
+      y.ui.panelBody.querySelector('[data-caption-action="translate"]').click();await settleFixture();
+      fixtureCheck('Translation failure is visible and can be retried',y.ui.panelBody.querySelector('.lm-cue-native').textContent.includes('翻译失败'));
+      window.fixtureTranslationFailure=false;y.ui.panelBody.querySelector('[data-caption-action="translate"]').click();await settleFixture();
+      fixtureCheck('Retry clears the failure and shows the full translation',y.ui.panelBody.querySelector('.lm-cue-native').textContent==='整句译文：'+y.state.cues[0].text);
+      window.fixtureHoldTranslation=true;
+      y.queueTranslation(0,true);await settleFixture();
+      const oldCue=y.state.cues[0];y.editCaption(0);
+      const nextInput=y.ui.panelBody.querySelector('textarea');nextInput.value='校正した新しい原文。';nextInput.form.requestSubmit();await settleFixture();
+      fixtureTranslationCallbacks[0]();await settleFixture();
+      fixtureCheck('A late response cannot overwrite a corrected subtitle',!y.state.nativeCues[0]?.text?.includes('気少衛生ひり'));
+      fixtureTranslationCallbacks[1]();window.fixtureHoldTranslation=false;await settleFixture();
+      fixtureCheck('Latest correction wins even when translations finish out of order',y.state.nativeCues[0].text==='整句译文：校正した新しい原文。');
+      window.fixtureHoldTranslation=true;y.queueTranslation(0,true);await settleFixture();
+      y.state.loadGen++;y.state.cues=[{start:0,end:1000,text:'別の動画。'}];y.state.nativeCues=[];
+      fixtureTranslationCallbacks[2]();window.fixtureHoldTranslation=false;await settleFixture();
+      fixtureCheck('Old translations cannot leak into a different video',y.state.nativeCues.length===0);
     `;
     const finish = `(async()=>{try{${checks}\n document.title='LM_JA_YT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:true,checks:fixtureChecks}))));}catch(error){document.title='LM_JA_YT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:error.stack,checks:fixtureChecks}))));}})();`;
     const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button"].map((name) => source(`src/shared/${name}.js`)), content, finish];

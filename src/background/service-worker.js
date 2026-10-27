@@ -22,6 +22,7 @@ const DEFAULTS = {
 
 const cache = new Map();
 const CACHE_LIMIT = 4000;
+let googleRetryAfter = 0;
 const BACKUP_FORMAT = "linguamate-backup";
 const BACKUP_VERSION = 1;
 let storageTail = Promise.resolve();
@@ -107,7 +108,7 @@ async function handleMessage(message) {
     case "LM_TRANSLATE":
       return {
         ok: true,
-        result: await translateText(message.text, message.from, message.to)
+        result: await translateText(message.text, message.from, message.to, message.refresh === true)
       };
     case "LM_LOOKUP":
       return {
@@ -621,13 +622,13 @@ function cacheSet(key, value) {
   }
 }
 
-async function translateText(text, from, to) {
+async function translateText(text, from, to, refresh = false) {
   const clean = String(text || "").trim();
   if (!clean) return { text: "", phonetic: "" };
   if (from === to) return { text: clean, phonetic: "" };
   const key = `t:${from}:${to}:${clean}`;
   const cached = cacheGet(key);
-  if (cached) return cached;
+  if (cached && !refresh) return cached;
 
   try {
     const google = await translateGoogle(clean, from, to);
@@ -763,22 +764,31 @@ async function translateEntries(entries, to) {
 async function translateLines(lines, from, to) {
   const clean = lines.map((line) => String(line || "").replace(/\s+/g, " ").trim());
   if (!clean.some(Boolean) || from === to) return clean;
+  const found = {};
+  clean.forEach((line, index) => {
+    const cached = cacheGet(`t:${from}:${to}:${line}`);
+    if (cached?.text) found[index] = cached.text;
+  });
   const packed = clean
-    .map((line, index) => (line ? `[${index}] ${line}` : ""))
+    .map((line, index) => (line && !found[index] ? `[${index}] ${line}` : ""))
     .filter(Boolean)
     .join("\n");
   try {
-    const translated = await translateGoogle(packed, from, to, false);
-    const found = {};
-    const pattern = /\[(\d+)\]\s*([\s\S]*?)(?=\s*\[\d+\]|$)/g;
+    const translated = packed ? await translateGoogle(packed, from, to, false) : { text: "" };
+    const pattern = /[\[［](\d+)[\]］]\s*([\s\S]*?)(?=\s*[\[［]\d+[\]］]|$)/g;
     String(translated.text || "").replace(pattern, (_, index, gloss) => {
       found[index] = gloss.replace(/\s+/g, " ").trim();
+      if (found[index] && clean[Number(index)]) cacheSet(`t:${from}:${to}:${clean[Number(index)]}`, { text: found[index], phonetic: "" });
       return "";
     });
-    return clean.map((line, index) => found[String(index)] || "");
   } catch (err) {
-    return clean.map(() => "");
+    // Individual entries below can still succeed if batch markers were lost.
   }
+  return Promise.all(clean.map(async (line, index) => {
+    if (!line) return "";
+    if (found[String(index)]) return found[String(index)];
+    try { return (await translateText(line, from, to)).text || ""; } catch (_) { return ""; }
+  }));
 }
 
 async function pronounceClip(text, tl, audioUrl) {
@@ -811,6 +821,7 @@ async function audioToBase64(url) {
 }
 
 async function translateGoogle(text, from, to, detailed) {
+  if (Date.now() < googleRetryAfter) throw new Error("google_rate_limited");
   const params = new URLSearchParams({
     client: "gtx",
     sl: from === "auto" ? "auto" : from,
@@ -828,7 +839,8 @@ async function translateGoogle(text, from, to, detailed) {
     params.append("dt", "rm");
   }
   const url = `https://translate.googleapis.com/translate_a/single?${params.toString()}`;
-  const res = await fetch(url);
+  const res = await fetch(url, typeof AbortSignal !== "undefined" && AbortSignal.timeout ? { signal: AbortSignal.timeout(6000) } : undefined);
+  if (res.status === 429) googleRetryAfter = Date.now() + 60000;
   if (!res.ok) throw new Error(`google_${res.status}`);
   const data = await res.json();
   const translated = Array.isArray(data[0])
@@ -858,11 +870,14 @@ async function translateMyMemory(text, from, to) {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(
     `${from}|${to}`
   )}`;
-  const res = await fetch(url);
+  const res = await fetch(url, typeof AbortSignal !== "undefined" && AbortSignal.timeout ? { signal: AbortSignal.timeout(6000) } : undefined);
   if (!res.ok) throw new Error(`mymemory_${res.status}`);
   const data = await res.json();
+  if (data.responseStatus && Number(data.responseStatus) !== 200) throw new Error("translation_unavailable");
+  const translated = String(data.responseData?.translatedText || "");
+  if (/QUERY LENGTH LIMIT|MYMEMORY WARNING|YOU USED ALL AVAILABLE FREE/i.test(translated)) throw new Error("translation_unavailable");
   return {
-    text: (data.responseData && data.responseData.translatedText) || "",
+    text: translated,
     phonetic: "",
     senses: []
   };
