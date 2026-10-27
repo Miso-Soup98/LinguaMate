@@ -57,7 +57,7 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
         handleMessage(message).then(callback,error=>callback({ok:false,error:String(error.message)}));
       }},storage:{sync:area('sync'),local:area('local'),onChanged:{addListener(){}}},contextMenus:{onClicked:{addListener(){}}}};
     `;
-    const expose = "window.fixture={state,ui,ensureUi,renderWords,renderTranscript,renderCurrent,showDict,saveWord,uniqueWords,renderLearnTab,syncWordMarkers,hideDict,updatePhraseQuery,applyStoredState,queueTranslation,editCaption,alignCues,parseEvents};";
+    const expose = "window.fixture={state,ui,ensureUi,renderWords,renderTranscript,renderCurrent,showDict,saveWord,uniqueWords,renderLearnTab,syncWordMarkers,hideDict,updatePhraseQuery,applyStoredState,queueTranslation,editCaption,alignCues,parseEvents,syncToolbar,onTick,loadCaptions};";
     const content = source("src/content/youtube.js").replace('  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);\n  else boot();', expose);
     const checks = `
       const y=fixture,v=document.querySelector('video');
@@ -153,6 +153,55 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       y.state.loadGen++;y.state.cues=[{start:0,end:1000,text:'別の動画。'}];y.state.nativeCues=[];
       fixtureTranslationCallbacks[2]();window.fixtureHoldTranslation=false;await settleFixture();
       fixtureCheck('Old translations cannot leak into a different video',y.state.nativeCues.length===0);
+      y.state.settings.showNative=false;y.state.directTranslation=false;
+      y.state.cues=[{start:0,end:4000,text:'最初の字幕です。'},{start:4000,end:7000,text:'次の字幕です。'}];y.state.nativeCues=[];
+      v.currentTime=0.5;y.renderTranscript();y.renderCurrent();y.syncToolbar();
+      fixtureCheck('Translation toggle explicitly identifies its off state',y.ui.toolbar.querySelector('[data-act="native"]').textContent==='译文：关'&&y.ui.panelBody.querySelector('[data-caption-action="show-native"]').textContent==='显示全部译文');
+      window.fixtureHoldTranslation=true;fixtureTranslationCallbacks.length=0;
+      y.ui.panelBody.querySelector('.lm-cue[data-index="0"] [data-caption-action="translate"]').click();await settleFixture();
+      let manualLine=y.ui.panelBody.querySelector('.lm-cue[data-index="0"] .lm-cue-native');
+      fixtureCheck('Manual retranslation visibly shows progress even when global translations are hidden',!manualLine.hidden&&getComputedStyle(manualLine).display!=='none'&&manualLine.textContent.includes('翻译中')&&!y.ui.nativeLine.classList.contains('lm-hidden'));
+      fixtureTranslationCallbacks[0]();window.fixtureHoldTranslation=false;await settleFixture();
+      fixtureCheck('Manual result is visibly rendered in overlay and sidebar despite the off preference',!manualLine.hidden&&manualLine.getBoundingClientRect().height>0&&y.ui.nativeLine.getBoundingClientRect().height>0&&manualLine.textContent==='整句译文：最初の字幕です。');
+      fixtureCheck('Manual request leaves unrelated hidden rows and stored preference alone',y.ui.panelBody.querySelector('.lm-cue[data-index="1"] .lm-cue-native').hidden&&y.state.settings.showNative===false);
+      y.renderTranscript();y.renderCurrent();await settleFixture();
+      fixtureCheck('Manual result stays visible through subtitle and sidebar rerenders',!y.ui.panelBody.querySelector('.lm-cue[data-index="0"] .lm-cue-native').hidden&&!y.ui.nativeLine.classList.contains('lm-hidden'));
+      y.state.nativeCues=[];window.fixtureTranslationFailure=true;
+      y.ui.panelBody.querySelector('.lm-cue[data-index="0"] [data-caption-action="translate"]').click();await settleFixture();
+      fixtureCheck('Manual translation failure is visible while translations are switched off',!y.ui.panelBody.querySelector('.lm-cue-native').hidden&&y.ui.panelBody.querySelector('.lm-cue-native').textContent.includes('翻译失败'));
+      window.fixtureTranslationFailure=false;
+      y.ui.panelBody.querySelector('[data-caption-action="show-native"]').click();await settleFixture();
+      fixtureCheck('Sidebar control enables and persists all translations',y.state.settings.showNative===true&&fixtureData.sync.showNative===true&&y.ui.toolbar.querySelector('[data-act="native"]').textContent==='译文：开');
+      y.ui.toolbar.querySelector('[data-act="native"]').click();await settleFixture();
+      fixtureCheck('Turning translations off hides manually revealed results too',y.state.settings.showNative===false&&y.ui.panelBody.querySelector('.lm-cue-native').hidden&&y.ui.nativeLine.classList.contains('lm-hidden'));
+      y.state.cues=y.parseEvents({events:[{tStartMs:0,dDurationMs:10000,segs:[{utf8:'最初の字幕です。'}]},{tStartMs:4000,dDurationMs:6000,segs:[{utf8:'次の字幕です。'}]}]},{japanese:true,asr:true});
+      y.renderTranscript();v.currentTime=3.999;y.onTick();await settleFixture();
+      fixtureCheck('Original caption remains until the next source timestamp',lmJapaneseUi.textWithoutReading(y.ui.learningLine)==='最初の字幕です。');
+      v.currentTime=4;v.dispatchEvent(new Event('timeupdate'));await settleFixture();
+      fixtureCheck('Caption switches on video timeupdate without waiting for translation or merged paragraphs',lmJapaneseUi.textWithoutReading(y.ui.learningLine)==='次の字幕です。'&&y.ui.panelBody.querySelector('.lm-cue.active').dataset.index==='1');
+      const trackRequests=[];let missingTranslationTrack=false;
+      window.addEventListener('message',event=>{
+        const message=event.data;if(message?.source!=='linguamate-content')return;
+        let data;
+        if(message.type==='LM_PING')data={ok:true};
+        if(message.type==='LM_GET_TRACKS')data={videoId:'fixture',tracks:[{languageCode:'ja',kind:'asr',baseUrl:'https://example.test/ja'}]};
+        if(message.type==='LM_FETCH_TRACK'){
+          trackRequests.push(message.data);
+          data={text:message.data.tlang&&missingTranslationTrack?'':JSON.stringify({events:[
+            {tStartMs:0,dDurationMs:7000,segs:[{utf8:message.data.tlang?'第一条完整译文。':'最初の字幕です。'}]},
+            {tStartMs:4000,dDurationMs:3000,segs:[{utf8:message.data.tlang?'第二条完整译文。':'次の字幕です。'}]}
+          ]})};
+        }
+        if(data)window.postMessage({source:'linguamate-page',requestId:message.requestId,data},'*');
+      });
+      y.state.settings.showNative=true;v.currentTime=.5;
+      let translationCount=fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').length;
+      await y.loadCaptions(true);await settleFixture();
+      fixtureCheck('Loading Japanese captions retrieves the entire timed translation track',trackRequests.length===2&&trackRequests[1].tlang==='zh-Hans'&&y.state.nativeCues[1].text==='第二条完整译文。');
+      fixtureCheck('A successful timed track requires no separate network translation for every caption',fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').length===translationCount&&y.ui.nativeLine.textContent==='第一条完整译文。');
+      missingTranslationTrack=true;
+      await y.loadCaptions(true);await settleFixture();
+      fixtureCheck('A missing timed track falls back to translating displayed source cues',y.state.nativeTrackLoading===false&&y.state.nativeCues[0].text==='整句译文：最初の字幕です。'&&fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').length>translationCount);
     `;
     const finish = `(async()=>{try{${checks}\n document.title='LM_JA_YT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:true,checks:fixtureChecks}))));}catch(error){document.title='LM_JA_YT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:error.stack,checks:fixtureChecks}))));}})();`;
     const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button"].map((name) => source(`src/shared/${name}.js`)), content, finish];

@@ -260,6 +260,7 @@
       const action = ev.target.closest("[data-caption-action]");
       if (action) {
         ev.stopPropagation();
+        if (action.dataset.captionAction === "show-native") { persist({ showNative: true }); return; }
         const index = Number(action.closest("[data-index]")?.dataset.index);
         if (action.dataset.captionAction === "edit") editCaption(index);
         if (action.dataset.captionAction === "translate") queueTranslation(index, true);
@@ -409,6 +410,11 @@
     };
     ui.toolbar.querySelectorAll("button[data-act]").forEach((btn) => {
       btn.classList.toggle("active", !!map[btn.dataset.act]);
+      if (btn.dataset.act === "native") {
+        btn.textContent = state.settings.showNative ? "译文：开" : "译文：关";
+        btn.title = state.settings.showNative ? "隐藏全部译文" : "显示全部译文";
+        btn.setAttribute("aria-pressed", String(state.settings.showNative));
+      }
     });
     ui.learningSelect.value = state.settings.learningLang;
     ui.nativeSelect.value = state.settings.nativeLang;
@@ -422,8 +428,12 @@
     if (video && ui.clockVideo !== video) {
       ui.clockVideo?.removeEventListener("seeking", resetPlaybackClock);
       ui.clockVideo?.removeEventListener("seeked", resetPlaybackClock);
+      ui.clockVideo?.removeEventListener("timeupdate", onTick);
+      ui.clockVideo?.removeEventListener("seeked", onTick);
       video.addEventListener("seeking", resetPlaybackClock);
       video.addEventListener("seeked", resetPlaybackClock);
+      video.addEventListener("timeupdate", onTick);
+      video.addEventListener("seeked", onTick);
       ui.clockVideo = video;
     }
     if (video && state.settings.enabled && (ui.rateVideo !== video || ui.appliedRate !== state.settings.playbackRate)) {
@@ -454,6 +464,7 @@
       return false;
     }
     state.settings = lmMergeSettings(result.settings || { ...state.settings, ...patch });
+    if (patch.showNative === false) state.cues.forEach((cue) => { cue.translationRevealed = false; });
     syncToolbar();
     placePanel();
     applyCaptionVisibility();
@@ -501,23 +512,18 @@
   }
 
   function mergeCues(rows, options = {}) {
-    const out = [];
-    for (const original of rows) {
+    // Display boundaries are the platform's timestamps, not sentence length.
+    // Joining several ASR events used to hold the same caption for 8–12 seconds.
+    const out = rows.map((original) => {
       const row = { ...original };
       if (options.japanese && options.asr) row.text = japaneseCaptionText(row.text);
-      const prev = out[out.length - 1];
-      if (
-        prev &&
-        row.start >= prev.start && row.start - prev.end < 700 &&
-        (!options.japanese || row.end - prev.start <= 12000) &&
-        prev.text.length + row.text.length < 90 &&
-        !/[.!?。！？]$/.test(prev.text)
-      ) {
-        prev.text = `${prev.text} ${row.text}`.replace(/\s+/g, " ").trim();
-        if (options.japanese && options.asr) prev.text = japaneseCaptionText(prev.text);
-        prev.end = Math.max(prev.end, row.end);
-      } else {
-        out.push(Object.assign({}, row));
+      return row;
+    }).sort((a, b) => a.start - b.start);
+    // ASR durations include the rolling display window. A new cue replaces
+    // that window; otherwise an older cue masks the current speech.
+    if (options.asr) {
+      for (let i = 0; i < out.length - 1; i += 1) {
+        if (out[i + 1].start > out[i].start) out[i].end = Math.min(out[i].end, out[i + 1].start);
       }
     }
     return out;
@@ -653,6 +659,7 @@
       state.tracks = cached.tracks || [];
       state.learningTrack = cached.learningTrack;
       state.directTranslation = cached.directTranslation;
+      state.nativeTrackLoading = false;
       showReady();
       return;
     }
@@ -702,7 +709,8 @@
     const learning = pickTrack(tracks, state.settings.learningLang, true) || tracks[0];
     const nativeExact = pickTrack(tracks, state.settings.nativeLang, false);
     state.learningTrack = learning;
-    state.directTranslation = /^ja(?:-|$)/i.test(learning.languageCode) && !nativeExact;
+    state.directTranslation = /^ja(?:-|$)/i.test(learning.languageCode);
+    state.nativeTrackLoading = true;
     state.nativeCues = [];
     const learningCues = await fetchTrack(learning, videoId);
     if (gen !== state.loadGen) return;
@@ -716,23 +724,19 @@
     }
     showReady();
 
-    if (state.directTranslation) {
-      // Translate the exact displayed cue, so different sentence boundaries in
-      // YouTube's translated track can never discard most of a Japanese row.
-      captionCache.set(key, { cues: state.cues, nativeCues: state.nativeCues, tracks,
-        learningTrack: learning, directTranslation: true });
-      return;
-    }
-
+    // One timed track provides translations for the whole video. Keep direct
+    // translation for missing rows and explicit retries, rather than making
+    // every short caption wait on a separate network request.
     const translated = nativeExact && nativeExact.baseUrl !== learning.baseUrl
       ? await fetchTrack(nativeExact, videoId)
       : await fetchTrack(learning, videoId, lmYtCode(state.settings.nativeLang));
     if (gen !== state.loadGen) return;
-    state.nativeCues = translated.length ? alignCues(state.cues, translated) : [];
+    state.nativeTrackLoading = false;
+    installNativeTranslations(translated);
     captionCache.set(key, {
       cues: state.cues,
       nativeCues: state.nativeCues,
-      tracks, learningTrack: learning, directTranslation: false
+      tracks, learningTrack: learning, directTranslation: state.directTranslation
     });
     if (state.tab === "subs") renderTranscript();
     renderCurrent();
@@ -750,12 +754,41 @@
     });
   }
 
+  function installNativeTranslations(translated) {
+    const aligned = alignCues(state.cues, translated);
+    aligned.forEach((native, index) => {
+      const cue = state.cues[index];
+      // A late track must not undo a user's edited source or manual retranslation.
+      if (native.text && !cue.translationRevealed && cue.originalText === undefined) {
+        state.nativeCues[index] = { ...native, source: "视频字幕轨道" };
+        cue.translationPending = false;
+        cue.translationError = false;
+        updateTranslationLine(index);
+      }
+    });
+  }
+
+  function translationVisible(cue) {
+    return state.settings.showNative || cue?.translationRevealed === true;
+  }
+
   function queueTranslation(index, force = false) {
     const cue = state.cues[index];
     if (!cue || !state.settings.enabled || (!force && (!state.settings.showNative || !state.directTranslation))) return;
+    if (force) {
+      // A direct request to translate must reveal its result even while the
+      // user's global subtitle-translation preference is off.
+      cue.translationRevealed = true;
+      updateTranslationLine(index);
+    }
+    if (!force && state.nativeTrackLoading) return;
     if (!force && (state.nativeCues[index]?.text || cue.translationError)) return;
     const key = `${state.loadGen}|${index}|${cue.text}|${state.settings.nativeLang}`;
-    if (translationJobs.has(key)) return;
+    if (translationJobs.has(key)) {
+      const existing = translationJobs.get(key);
+      if (force) existing.refresh = true;
+      return;
+    }
     const job = { key, index, cue, text: cue.text, gen: state.loadGen, refresh: force,
       from: state.learningTrack?.languageCode || state.settings.learningLang, to: state.settings.nativeLang };
     translationJobs.set(key, job);
@@ -769,9 +802,18 @@
 
   async function drainTranslations() {
     if (translationWorkers >= 2 || !translationQueue.length) return;
+    translationQueue.sort((a, b) => Number(b.refresh) - Number(a.refresh) ||
+      Math.abs(a.index - state.activeIndex) - Math.abs(b.index - state.activeIndex));
     const job = translationQueue.shift();
     if (!state.settings.enabled || job.gen !== state.loadGen || state.cues[job.index] !== job.cue || job.text !== job.cue.text) {
       translationJobs.delete(job.key);
+      drainTranslations();
+      return;
+    }
+    if (!job.refresh && state.nativeCues[job.index]?.text) {
+      job.cue.translationPending = false;
+      translationJobs.delete(job.key);
+      updateTranslationLine(job.index);
       drainTranslations();
       return;
     }
@@ -781,8 +823,8 @@
     translationJobs.delete(job.key);
     if (state.settings.enabled && job.gen === state.loadGen && state.cues[job.index] === job.cue && job.text === job.cue.text && state.settings.nativeLang === job.to) {
       job.cue.translationPending = false;
-      job.cue.translationError = !response.ok || !response.result?.text;
-      if (!job.cue.translationError) state.nativeCues[job.index] = {
+      job.cue.translationError = (!response.ok || !response.result?.text) && (job.refresh || !state.nativeCues[job.index]?.text);
+      if (response.ok && response.result?.text && (job.refresh || !state.nativeCues[job.index]?.text)) state.nativeCues[job.index] = {
         start: job.cue.start, end: job.cue.end, text: response.result.text, source: "整句机器翻译"
       };
       updateTranslationLine(job.index);
@@ -794,7 +836,7 @@
     const cue = state.cues[index];
     if (!cue) return;
     const native = state.nativeCues[index]?.text;
-    const label = cue.translationPending ? "整句翻译中…" : cue.translationError ? "翻译失败，请点击重译" : "";
+    const label = cue.translationPending ? "整句翻译中…" : cue.translationError ? "翻译失败，请点击重译" : state.nativeTrackLoading ? "正在读取译文…" : "";
     const row = ui.panelBody?.querySelector(`.lm-cue[data-index="${index}"]`);
     const retry = row?.querySelector('[data-caption-action="translate"]');
     if (retry) {
@@ -805,11 +847,12 @@
     const line = row?.querySelector(".lm-cue-native");
     if (line) {
       renderWords(line, native || label, state.settings.nativeLang, !!native && state.settings.nativeInteractive);
-      line.hidden = !state.settings.showNative;
+      line.hidden = !translationVisible(cue);
+      line.setAttribute("aria-live", "polite");
     }
     if (state.activeIndex === index && ui.nativeLine) {
       renderWords(ui.nativeLine, native || label, state.settings.nativeLang, !!native && state.settings.nativeInteractive);
-      ui.nativeLine.classList.toggle("lm-hidden", !state.settings.showNative || !(native || label));
+      ui.nativeLine.classList.toggle("lm-hidden", !translationVisible(cue) || !(native || label));
     }
   }
 
@@ -845,7 +888,7 @@
   }
 
   function currentIndex(ms) {
-    for (let i = 0; i < state.cues.length; i += 1) {
+    for (let i = state.cues.length - 1; i >= 0; i -= 1) {
       const cue = state.cues[i];
       if (ms >= cue.start && ms < cue.end) return i;
     }
@@ -869,7 +912,7 @@
     const cue = state.cues[idx];
     const native = state.nativeCues[idx];
     ui.learningLine.classList.toggle("lm-hidden", !state.settings.showLearning || !cue);
-    ui.nativeLine.classList.toggle("lm-hidden", !state.settings.showNative || !native);
+    ui.nativeLine.classList.toggle("lm-hidden", !translationVisible(cue) || !native);
     if (cue) renderWords(ui.learningLine, cue.text, state.settings.learningLang);
     if (native) renderWords(ui.nativeLine, native.text, state.settings.nativeLang, state.settings.nativeInteractive);
     if (idx >= 0) {
@@ -926,6 +969,13 @@
       notice.textContent = state.learningTrack?.kind === "asr"
         ? "日语自动字幕：可能有同音字、漏词和专名错误。查词异常时可校正原文，再整句重译。"
         : "日语字幕 · 可校正原文、查询词组或整句重译。";
+      if (!state.settings.showNative) {
+        const show = document.createElement("button");
+        show.type = "button";
+        show.dataset.captionAction = "show-native";
+        show.textContent = "显示全部译文";
+        notice.append(document.createTextNode(" 当前译文已关闭。"), show);
+      }
       fragment.append(notice);
     }
     state.cues.forEach((cue, i) => {
@@ -944,8 +994,9 @@
       if (native || japanese) {
         const nativeLine = document.createElement("div");
         nativeLine.className = "lm-cue-native";
-        renderWords(nativeLine, native || (cue.translationPending ? "整句翻译中…" : cue.translationError ? "翻译失败，请点击重译" : ""), state.settings.nativeLang, !!native && state.settings.nativeInteractive);
-        nativeLine.hidden = !state.settings.showNative;
+        renderWords(nativeLine, native || (cue.translationPending ? "整句翻译中…" : cue.translationError ? "翻译失败，请点击重译" : state.nativeTrackLoading ? "正在读取译文…" : ""), state.settings.nativeLang, !!native && state.settings.nativeInteractive);
+        nativeLine.hidden = !translationVisible(cue);
+        nativeLine.setAttribute("aria-live", "polite");
         row.append(nativeLine);
       }
       if (japanese) {
@@ -1655,12 +1706,14 @@
     }
     return {
       reloadCaptions: previous.learningLang !== state.settings.learningLang || previous.nativeLang !== state.settings.nativeLang || (!previous.enabled && state.settings.enabled),
+      hideNative: previous.showNative && !state.settings.showNative,
       settingsChanged: JSON.stringify(previous) !== JSON.stringify(state.settings)
     };
   }
 
   function applyStoredState(result) {
     if (!result) return;
+    if (result.hideNative) state.cues.forEach((cue) => { cue.translationRevealed = false; });
     if (result.settingsChanged) {
       syncToolbar();
       placePanel();

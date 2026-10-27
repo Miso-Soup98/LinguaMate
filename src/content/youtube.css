@@ -431,7 +431,7 @@ html.lm-hide-yt-captions .caption-window {
 }
 .lm-caption-notice { padding: 10px 12px; color: #d9dce3; font-size: 12px; line-height: 1.6; background: rgba(255,193,7,.08); border-bottom: 1px solid rgba(255,255,255,.12); }
 .lm-caption-actions { display: flex; gap: 8px; margin-top: 8px; }
-.lm-caption-actions button, .lm-caption-editor button, .lm-caption-original button { color: #c6dcff; background: rgba(100,150,220,.12); border: 1px solid rgba(160,190,230,.25); border-radius: 5px; padding: 3px 7px; font-size: 12px; cursor: pointer; }
+.lm-caption-actions button, .lm-caption-editor button, .lm-caption-original button, .lm-caption-notice button { color: #c6dcff; background: rgba(100,150,220,.12); border: 1px solid rgba(160,190,230,.25); border-radius: 5px; padding: 3px 7px; font-size: 12px; cursor: pointer; }
 .lm-caption-editor { margin-top: 10px; cursor: default; }
 .lm-caption-editor label { font-size: 13px; color: #eee; }
 .lm-caption-editor textarea { display: block; box-sizing: border-box; width: 100%; min-height: 100px; margin: 6px 0; padding: 8px; border: 1px solid #8ea6c9; border-radius: 5px; background: #212630; color: #fff; font: 15px/1.6 sans-serif; resize: vertical; }
