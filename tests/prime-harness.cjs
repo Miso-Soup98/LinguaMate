@@ -258,7 +258,7 @@ function primeHarness({ deferredLookup = false, deferredTranslation = false, def
     requestAnimationFrame: (fn) => setTimeout(fn, 16), cancelAnimationFrame: clearTimeout
   });
   const file = path.resolve(__dirname, "../src/content/prime.js");
-  for (const name of ["defaults.js", "frequency.js", "captions.js", "feedback.js", "japanese.js", "japanese-ui.js", "japanese-client.js", "vocab-button.js", "prime-manifest.js", "prime-timeline.js"]) {
+  for (const name of ["defaults.js", "frequency.js", "captions.js", "feedback.js", "japanese.js", "japanese-ui.js", "japanese-client.js", "vocab-button.js", "word-card.js", "prime-manifest.js", "prime-timeline.js"]) {
     const helper = path.resolve(__dirname, "../src/shared", name);
     vm.runInContext(fs.readFileSync(helper, "utf8"), context, { filename: helper });
   }

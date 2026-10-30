@@ -60,6 +60,11 @@ function harness(options = {}) {
       items = items.filter((item) => item.id !== payload.id);
       return { ok: true };
     }
+    if (type === "LM_VOCAB_UPDATE") {
+      const item = items.find((item) => item.id === payload.id);
+      Object.assign(item, payload.patch);
+      return { ok: true, item };
+    }
     throw new Error(`unexpected_message:${type}`);
   };
   const binding = bind(button, {
@@ -84,6 +89,29 @@ async function loaded(options) {
   await h.binding.ready;
   return h;
 }
+
+test("choosing a meaning creates a card then updates only its definition while retaining review data", async () => {
+  const h = await loaded();
+  assert.equal(await h.binding.saveMeaning("问候语"), true);
+  assert.equal(h.items.length, 1);
+  const item = h.items[0]; item.due = 123456; item.reps = 5;
+  assert.equal(await h.binding.saveMeaning("打招呼的声音"), true);
+  assert.equal(h.items.length, 1);
+  assert.equal(h.items[0].id, item.id);
+  assert.equal(h.items[0].translation, "打招呼的声音");
+  assert.equal(h.items[0].due, 123456); assert.equal(h.items[0].reps, 5);
+  assert.equal(h.button.getAttribute("aria-pressed"), "true");
+  assert.equal(h.status.textContent, "已将此义项保存到生词本");
+});
+
+test("failed meaning updates keep the saved entry and permit a retry", async () => {
+  const h = await loaded({ items: [{ id: "existing", word: "hello", lang: "en", translation: "旧释义" }], overrides: { LM_VOCAB_UPDATE: [{ok:false}] } });
+  assert.equal(await h.binding.saveMeaning("新释义"), false);
+  assert.equal(h.items[0].translation, "旧释义");
+  assert.equal(h.button.getAttribute("aria-pressed"), "true");
+  assert.equal(await h.binding.saveMeaning("新释义"), true);
+  assert.equal(h.items[0].translation, "新释义");
+});
 
 test("initial read renders an accessible unsaved button and live status", async () => {
   const h = await loaded();

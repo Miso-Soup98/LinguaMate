@@ -163,10 +163,30 @@ function lmBindVocabButton(button, { word, lang, send, createItem, onChange, jap
     }, () => notifyChange(savedItem || changedItem));
   }
 
+  async function saveMeaning(translation) {
+    if (busy) await pending;
+    return run(async () => {
+      report("正在保存所选义项…", "pending");
+      try {
+        await readLatest();
+        const response = savedItem
+          ? await send("LM_VOCAB_UPDATE", { id: savedItem.id, patch: { translation } })
+          : await send("LM_VOCAB_ADD", { item: { ...await createItem(), word: boundWord, lang: boundLang, translation } });
+        if (!response?.ok || !response.item) throw new Error("vocabulary_meaning_failed");
+        savedItem = response.item;
+        report("已将此义项保存到生词本", "success");
+        return true;
+      } catch (_) {
+        report("保存义项失败，请重试", "error");
+        return false;
+      }
+    }, () => notifyChange());
+  }
+
   button.addEventListener("click", (event) => {
     event.preventDefault();
     return toggle();
   });
   const ready = refresh();
-  return { ready, refresh, get pending() { return pending; } };
+  return { ready, refresh, saveMeaning, get pending() { return pending; } };
 }

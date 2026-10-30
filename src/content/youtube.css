@@ -298,6 +298,27 @@ html.lm-hide-yt-captions .caption-window {
 .lm-dict-trans { margin-top: 8px; font-size: 16px; }
 .lm-dict-senses { margin-top: 8px; color: var(--lm-muted); font-size: 12px; line-height: 1.5; }
 .lm-dict-context { margin-top: 8px; font-size: 12px; color: #c9d6e0; }
+.lm-word-card { overflow-wrap: anywhere; }
+.lm-card-label { font-size: 12px; font-weight: 750; color: var(--lm-accent); margin-top: 14px; }
+.lm-card-context { padding: 0 10px 10px; margin-top: 10px; border: 1px solid var(--lm-line); border-radius: 10px; background: rgba(45, 212, 191, .05); }
+.lm-card-context .lm-dict-context { font-size: 14px; line-height: 1.6; }
+.lm-card-context mark { background: rgba(251, 191, 36, .2); color: #fde68a; border-radius: 3px; }
+.lm-context-translation { font-size: 14px; line-height: 1.6; margin-top: 6px; color: #f1f5f9; }
+.lm-card-muted, .lm-card-gloss-status, .lm-card-forms, .lm-card-links { font-size: 12px; color: var(--lm-muted); margin-top: 8px; line-height: 1.5; }
+.lm-word-card button { border: 1px solid var(--lm-line); border-radius: 7px; background: rgba(255,255,255,.05); color: var(--lm-accent); cursor: pointer; padding: 5px 8px; font: inherit; font-size: 12px; margin-top: 7px; }
+.lm-word-card button:hover { background: rgba(45,212,191,.14); }
+.lm-word-card button:disabled { opacity: .6; cursor: wait; }
+.lm-word-card [hidden] { display: none !important; }
+.lm-card-more { width: 100%; }
+.lm-card-choice-status { color: var(--lm-accent); font-size: 12px; margin-top: 8px; }
+.lm-card-links a { color: var(--lm-accent); text-decoration: underline; }
+.lm-card-query { display: flex; align-items: end; gap: 8px; margin-top: 12px; }
+.lm-card-query label { flex: 1; min-width: 0; font-size: 12px; color: var(--lm-muted); }
+.lm-card-query input { display: block; box-sizing: border-box; width: 100%; margin-top: 4px; padding: 7px; color: #f1f5f9; background: rgba(0,0,0,.2); border: 1px solid var(--lm-line); border-radius: 7px; font: inherit; }
+.lm-example-translation { font-size: 12px; color: #cdeee5; }
+.lm-card-morphology { margin-top: 10px; font-size: 12px; }
+.lm-card-morphology summary { color: var(--lm-accent); cursor: pointer; }
+.lm-card-context-senses { border-left: 2px solid var(--lm-accent); padding-left: 10px; }
 
 .lm-panel {
   position: relative;

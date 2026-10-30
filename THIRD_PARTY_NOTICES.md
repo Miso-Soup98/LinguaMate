@@ -1,4 +1,8 @@
-# Japanese analysis and dictionary data
+# Dictionary services and Japanese analysis data
+
+## English dictionary service
+
+English lookups use [Free Dictionary API](https://dictionaryapi.dev/), whose responses include definitions, examples, pronunciations and source references from Wiktionary. LinguaMate requests entries on demand, keeps their original definitions, and labels machine translations separately. The card provides a Wiktionary link for checking the original entry; English definitions are not bundled as a redistributed dataset in this repository.
 
 ## Kuromoji.js 0.1.2 and IPADIC
 
@@ -10,7 +14,7 @@
 
 ## JMdict
 
-This package uses the [JMdict Japanese-English dictionary](https://www.edrdg.org/jmdict/j_jmdict.html), created by the Electronic Dictionary Research and Development Group (EDRDG) and its contributors, distributed as JSON by [scriptin/jmdict-simplified](https://github.com/scriptin/jmdict-simplified). The common English subset (22,647 entries) supplies frequency classification and fast lookups. Since 1.10.0, the full English snapshot (218,930 entries) supplements missing lookups through 32 compressed shards. A separate exact written-noun index supports compound segmentation; no fuzzy correction of source captions is performed. Both snapshots are dated 2026-10-19.
+This package uses the [JMdict Japanese-English dictionary](https://www.edrdg.org/jmdict/j_jmdict.html), created by the Electronic Dictionary Research and Development Group (EDRDG) and its contributors, distributed as JSON by [scriptin/jmdict-simplified](https://github.com/scriptin/jmdict-simplified). The common English subset (22,647 entries) supplies frequency classification and fallback lookups. Since 1.10.0, the full English snapshot (218,930 entries) is available through 32 compressed shards. Version 1.11.0 queries the full snapshot for common words as well, preserving all matching senses and usage notes. A separate exact written-noun index supports compound segmentation; no fuzzy correction of source captions is performed. Both snapshots are dated 2026-10-19.
 
 The data and LinguaMate's compact derivative are licensed under [Creative Commons Attribution-ShareAlike 4.0](https://creativecommons.org/licenses/by-sa/4.0/). LinguaMate shortens field names and removes unused fields, retaining headword, reading, sense restrictions and English glosses; no machine translation is added to the dictionary file. The runtime marks generated translations separately from dictionary definitions.
 

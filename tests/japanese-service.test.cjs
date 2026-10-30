@@ -51,7 +51,7 @@ test("lookup uses the contextual dictionary form, real dictionary meanings and b
   assert.match(card.translation, /译义:to come/);
   assert.equal(card.translationSource, "词典释义的机器翻译");
   assert.ok(card.entries.some((entry) => /come/.test(entry.items[0].definition)));
-  assert.ok(card.entries.every((entry) => entry.items[0].gloss.startsWith("译义:")));
+  assert.ok(card.entries.slice(0, 6).every((entry) => entry.items[0].gloss.startsWith("译义:")));
   assert.match(card.dictionarySource, /JMdict/);
   assert.equal(card.dictionaryMatched, true);
 });
@@ -189,4 +189,17 @@ test("particles and auxiliary verbs explain their grammatical function", async (
   assert.equal(verb.japanese.lemma, "見る");
   assert.ok(verb.japanese.grammarNotes.some(note => /逐步来看/.test(note)));
   assert.ok(verb.japanese.conjugation.labels.some(note => /ていく/.test(note)));
+});
+
+test("Japanese polysemy retains late senses and usage notes instead of silently truncating them", async () => {
+  const { service, context } = harness();
+  context.translateLines = async () => { throw new Error("staged lookup must not wait for network glosses"); };
+  const card = await service.lookup("取った", "zh-CN", "彼は休暇を取った。", {}, true);
+  assert.equal(card.japanese.lemma, "取る");
+  assert.ok(card.entries.length > 6);
+  assert.ok(card.entries.some(entry => /vacation|holiday|time off/.test(entry.items[0].definition)));
+  assert.ok(card.entries.every(entry => entry.items[0].definition && entry.senseId));
+  const hang = await service.lookup("掛ける", "en", "", {}, true);
+  assert.ok(hang.entries.length > 10);
+  assert.ok(hang.entries.some(entry => entry.items[0].usage));
 });

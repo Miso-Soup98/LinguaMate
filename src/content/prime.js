@@ -870,14 +870,14 @@
     const token = ++lookupToken;
     const word = phrase?.surface || wordEl.dataset.word;
     const from = wordEl.dataset.lang || state.settings.learningLang;
-    const japaneseHint = languageMatches(from, "ja") ? phrase ? { surface: word, isPhrase: true } : japaneseForWord(wordEl) : undefined;
+    const japaneseHint = languageMatches(from, "ja") ? phrase ? { surface: word, isPhrase: !phrase.lookupForm } : japaneseForWord(wordEl) : undefined;
     ui.dict.classList.remove("lm-hidden");
     if (ui.dict.parentElement !== document.documentElement) document.documentElement.appendChild(ui.dict);
     ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-empty">正在查询…</div>`;
     placeDict(wordEl);
     const cue = state.cues[Number(wordEl.closest("[data-index]")?.dataset.index ?? state.index)];
     const context = phrase?.context || cue?.text || "";
-    const res = await send("LM_LOOKUP", { word, from, to: state.settings.nativeLang, context, ...(japaneseHint ? { japanese: japaneseHint } : {}) });
+    const res = await send("LM_LOOKUP", { word, from, to: state.settings.nativeLang, context, staged: true, ...(japaneseHint ? { japanese: japaneseHint } : {}) });
     if (token !== lookupToken || hoverWord !== wordEl) return;
     if (!wordEl.isConnected) {
       hideDict();
@@ -893,22 +893,19 @@
     const japanese = languageMatches(from, "ja") ? data.japanese || (phrase ? { surface: word, lemma: word, pos: "词组" } : japaneseHint) : undefined;
     const persistentJapanese = lmJapaneseClient.persistent(japanese);
     const saveForm = persistentJapanese?.lemma || word;
+    const detailed = (/^en(?:-|$)/i.test(from) || japanese) && typeof lmWordCard !== "undefined";
     const entries = (data.entries || []).map((entry) => {
       const items = (entry.items || []).map((item, index) => `<div class="lm-entry"><div class="lm-gloss">${index + 1}. ${japanese && item.gloss ? "译文：" : ""}${escapeHtml(item.gloss || item.definition || "")}</div>${japanese && item.definition && item.gloss && item.definition !== item.gloss ? `<div class="lm-def">原文释义：${escapeHtml(item.definition)}</div>` : ""}${item.example ? `<div class="lm-ex">例：${escapeHtml(item.example)}</div>` : ""}</div>`).join("");
       return `<div class="lm-pos">${escapeHtml(entry.pos || "")}</div>${items}`;
     }).join("");
     ui.dict.innerHTML = `
-      <div class="lm-dict-head"><div><div class="lm-dict-word">${escapeHtml(data.word || word)}</div><div class="lm-dict-trans">${escapeHtml(data.translation || "")}</div></div></div>
+      <div class="lm-dict-head"><div><div class="lm-dict-word">${escapeHtml(data.word || word)}</div>${detailed && data.entries?.length ? '<div class="lm-card-muted">词典首义 · 更多含义见下方</div>' : ""}<div class="lm-dict-trans">${escapeHtml(data.translation || "")}</div></div></div>
       ${String(from).toLowerCase().startsWith("en") ? `<div class="lm-accents">
         <button type="button" data-accent="us">美式<span class="lm-ipa">${escapeHtml(data.phoneticUs || data.phonetic || "")}</span></button>
         <button type="button" data-accent="uk">英式<span class="lm-ipa">${escapeHtml(data.phoneticUk || data.phonetic || "")}</span></button>
       </div>` : `<div class="lm-accents"><button type="button" data-accent="read">朗读<span class="lm-ipa">${escapeHtml(data.phonetic || "")}</span></button></div>`}
-      ${japanese ? lmJapaneseUi.cardHtml(japanese) : ""}
-      ${entries || `<div class="lm-dict-trans">${escapeHtml(data.translation || "暂无释义")}</div>`}
-      ${japanese && data.dictionarySource ? `<div class="lm-def">词典：${escapeHtml(data.dictionarySource)}${data.dictionaryDate ? ` · ${escapeHtml(data.dictionaryDate)}` : ""}</div>` : ""}
-      ${japanese && data.translationSource ? `<div class="lm-def">译文来源：${escapeHtml(data.translationSource)}</div>` : ""}
-      ${japanese && data.lookupNotice ? `<p class="lm-ja-note">${escapeHtml(data.lookupNotice)}</p>` : ""}
-      <div class="lm-dict-context">${escapeHtml(context)}</div>
+      ${japanese ? `<details class="lm-card-morphology"><summary>词形与语法 · ${escapeHtml(japanese.lemma || word)}</summary>${lmJapaneseUi.cardHtml(japanese)}</details>` : ""}
+      ${detailed ? lmWordCard.html(data, context, from) : `${entries || `<div class="lm-dict-trans">${escapeHtml(data.translation || "暂无释义")}</div>`}<div class="lm-dict-context">${escapeHtml(context)}</div>`}
       <button type="button" class="lm-dict-save">加入生词本</button>
     `;
     ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
@@ -951,6 +948,16 @@
         if (hoverWord?.isConnected && dictOpen()) placeDict(hoverWord);
       }
     });
+    if (detailed) {
+      const vocabButton = ui.vocabButton;
+      lmWordCard.bind(ui.dict, {
+        data, context, from, to: state.settings.nativeLang, send,
+        isCurrent: () => token === lookupToken,
+        onSaveMeaning: (meaning) => vocabButton.saveMeaning(meaning),
+        onQuery: (surface) => showDict(wordEl, { surface, context, lookupForm: true }),
+        onResize: () => { if (wordEl.isConnected && dictOpen()) placeDict(wordEl); }
+      });
+    }
     placeDict(wordEl);
   }
 
@@ -990,6 +997,7 @@
   function scheduleHide() {
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
+      if (ui.dict?.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
       if (ui.dict?.matches(":hover") || hoverWord?.matches(":hover")) return;
       if (isPrimeWord(document.querySelector(".lm-word:hover"))) return;
       hideDict();

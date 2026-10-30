@@ -204,7 +204,7 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       fixtureCheck('A missing timed track falls back to translating displayed source cues',y.state.nativeTrackLoading===false&&y.state.nativeCues[0].text==='整句译文：最初の字幕です。'&&fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').length>translationCount);
     `;
     const finish = `(async()=>{try{${checks}\n document.title='LM_JA_YT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:true,checks:fixtureChecks}))));}catch(error){document.title='LM_JA_YT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:error.stack,checks:fixtureChecks}))));}})();`;
-    const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button"].map((name) => source(`src/shared/${name}.js`)), content, finish];
+    const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button", "word-card"].map((name) => source(`src/shared/${name}.js`)), content, finish];
     const html = `<!doctype html><meta charset="utf-8"><title>pending</title><style>body{margin:0;background:#111}video{display:block;width:800px;height:450px}${source("src/content/youtube.css")}</style><div class="html5-video-player"><video></video></div>${scripts.map((script) => `<script>${script.replace(/<\/script/gi, "<\\/script")}</script>`).join("")}`;
     const file = path.join(directory, "japanese.html");
     fs.writeFileSync(file, html, "utf8");

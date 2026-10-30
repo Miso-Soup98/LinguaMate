@@ -237,30 +237,38 @@
     return notes;
   }
 
-  async function lookup(word, to, context, hint) {
+  async function lookup(word, to, context, hint, staged = false) {
     const surface = normalized(word).trim();
     if (!surface || surface.length > 500) throw new Error("invalid_word");
     const analysis = await resolveAnalysis(surface, String(context || ""), hint);
     let dict = await dictionary().catch(() => null);
     let lexical = dict ? lexicalEntries(dict, analysis) : { entries: [], headword: analysis.lemma };
-    if (!lexical.entries.length) {
-      const extended = await extendedDictionary(analysis.lemma).catch(() => null);
-      if (extended) { dict = extended; lexical = lexicalEntries(dict, analysis); }
+    // Commonness is a learning hint, not a filter on the meanings of a word.
+    const [noun, verb] = analysis.parts || [];
+    const extendedKey = noun?.pos === "名詞" && noun.posDetail?.[0] === "サ変接続" && verb?.lemma === "する" && analysis.lemma === noun.lemma + "する"
+      ? noun.lemma : analysis.lemma;
+    const extended = await extendedDictionary(extendedKey).catch(() => null);
+    if (extended) {
+      const complete = lexicalEntries(extended, analysis);
+      if (complete.entries.length) { dict = extended; lexical = complete; }
     }
     const records = lexical.entries;
-    const chosen = records.slice(0, 4);
-    const entries = chosen.flatMap((record) => record.s.slice(0, 3).map((sense) => ({
+    const chosen = records;
+    const entries = chosen.flatMap((record) => record.s.map((sense, index) => ({
       pos: sense.p.map((tag) => dict.tags[tag] || tag).join(" / "),
+      posLabel: [...new Set(sense.p.map((tag) => /^v/.test(tag) ? (tag === "vi" ? "自动词" : tag === "vt" ? "他动词" : "动词") :
+        /^adj/.test(tag) ? "形容词" : /^n(?:-|$)/.test(tag) ? "名词" : tag === "adv" ? "副词" : tag === "prt" ? "助词" : tag === "exp" ? "固定表达" : dict.tags[tag] || tag))].join(" / "),
       entryId: record.id,
+      senseId: `${record.id}:${index}`,
       reading: record.r.map((reading) => lmJapanese.toHiragana(reading.t)).join(" / "),
-      items: [{ definition: sense.g.slice(0, 5).join("; "), example: "", synonyms: [] }]
-    }))).slice(0, 6);
+      items: [{ definition: sense.g.join("; "), usage: (sense.i || []).join("; "), example: "", synonyms: [] }]
+    })));
     // The dictionary is authoritative for lexical meanings. Online text is
     // labelled separately and never treated as a structured dictionary entry.
     const definitions = entries.map((entry) => entry.items[0].definition);
     const [translated, glosses] = await Promise.all([
       definitions.length ? Promise.resolve({ text: "" }) : bounded(translateText(analysis.surface, "ja", to), { text: "" }),
-      /^en(?:-|$)/i.test(to) ? Promise.resolve(definitions) : bounded(translateLines(definitions, "en", to), [])
+      /^en(?:-|$)/i.test(to) ? Promise.resolve(definitions) : staged ? Promise.resolve([]) : bounded(translateLines(definitions.slice(0, 6), "en", to), [])
     ]);
     entries.forEach((entry, index) => { entry.items[0].gloss = glosses[index] || ""; });
     if (chosen.length === 1) analysis.entryId = String(chosen[0].id);
@@ -277,9 +285,9 @@
       dictionaryDate: dict ? dict.date : "", dictionaryAvailable: Boolean(dict),
       dictionaryHeadword: lexical.headword,
       dictionaryMatched: records.length > 0, dictionaryAlternatives: Math.max(0, records.length - chosen.length),
-      translationSource: definitions.length ? (/^en(?:-|$)/i.test(to) || !glosses[0] ? "词典原始英文释义" : "词典释义的机器翻译") : translated.text ? "在线翻译" : "",
+      translationSource: definitions.length ? (/^en(?:-|$)/i.test(to) || !staged && !glosses[0] ? "词典原始英文释义" : "词典释义的机器翻译") : translated.text ? "在线翻译" : "",
       lookupNotice: !dict ? (translated.text ? "本地词典暂时无法载入；目前仅显示在线译文，可刷新页面后重试。" : "本地词典暂时无法载入，在线翻译也未返回结果，请刷新页面后重试。") : records.length ?
-        (lexical.headword !== analysis.lemma ? `「${analysis.lemma}」参考「${lexical.headword}」的する用法。` : "") + "词典列出可能义项，请结合字幕语境判断。" :
+        (lexical.headword !== analysis.lemma ? `「${analysis.lemma}」参考「${lexical.headword}」的する用法。` : "") + "词典义项不等于本句含义。可对照原句译文，选择本句义项收藏；更多义项展开后翻译。" :
         translated.text ? "未找到匹配词条；当前仅有机器译文，不代表它是正确的日语词。自动字幕可能识别错字或漏词，请结合整句核对，必要时校正原文。" : "未找到匹配词条，在线翻译暂不可用。请核对原字幕是否识别有误，也可划选完整词组查询。"
     };
   }

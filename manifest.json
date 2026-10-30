@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
-  "version": "1.10.1",
+  "version": "1.11.0",
   "default_locale": "zh_CN",
   "action": {
     "default_title": "__MSG_extName__",
@@ -81,6 +81,7 @@
         "src/shared/japanese-ui.js",
         "src/shared/japanese-client.js",
         "src/shared/vocab-button.js",
+        "src/shared/word-card.js",
         "src/content/youtube.js"
       ],
       "css": ["src/content/youtube.css"],
@@ -114,6 +115,7 @@
         "src/shared/japanese-ui.js",
         "src/shared/japanese-client.js",
         "src/shared/vocab-button.js",
+        "src/shared/word-card.js",
         "src/shared/prime-manifest.js",
         "src/shared/prime-timeline.js",
         "src/content/prime.js"

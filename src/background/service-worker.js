@@ -114,8 +114,13 @@ async function handleMessage(message) {
       return {
         ok: true,
         result: await lookupWord(message.word, message.from, message.to, message.context,
-          message.isPhrase === true ? { ...(isRecord(message.japanese) ? message.japanese : {}), isPhrase: true } : message.japanese)
+          message.isPhrase === true ? { ...(isRecord(message.japanese) ? message.japanese : {}), isPhrase: true } : message.japanese, message.staged === true)
       };
+    case "LM_GLOSS_TRANSLATE": {
+      if (!Array.isArray(message.lines) || message.lines.length > 8) throw new Error("invalid_gloss_batch");
+      const lines = message.lines.map((line) => cleanText(line, "definition", 3000));
+      return { ok: true, glosses: await translateLines(lines, "en", cleanLang(message.to, "zh-CN")) };
+    }
     case "LM_JA_ANALYZE":
       return { ok: true, tokens: await lmJapaneseService.analyze(message.text) };
     case "LM_PRONOUNCE": {
@@ -645,13 +650,13 @@ async function translateText(text, from, to, refresh = false) {
   return fallback;
 }
 
-async function lookupWord(word, from, to, context, japanese) {
+async function lookupWord(word, from, to, context, japanese, staged = false) {
   const clean = String(word || "").trim();
   if (!clean) return { word: "", translation: "", phonetic: "", senses: [], entries: [] };
-  if (/^ja(?:-|$)/i.test(from || "")) return lmJapaneseService.lookup(clean, to || "zh-CN", context, japanese);
-  const key = `w:${from}:${to}:${clean.toLowerCase()}`;
+  if (/^ja(?:-|$)/i.test(from || "")) return lmJapaneseService.lookup(clean, to || "zh-CN", context, japanese, staged);
+  const key = `w:${from}:${to}:${clean.toLowerCase()}:${staged}`;
   const cached = cacheGet(key);
-  if (cached) return cached;
+  if (cached) return { ...cached, word: clean, context: context || "" };
 
   const result = {
     word: clean,
@@ -668,15 +673,15 @@ async function lookupWord(word, from, to, context, japanese) {
 
   const english = String(from || "").toLowerCase().startsWith("en");
   const [googleResult, dictionary] = await Promise.all([
-    translateGoogle(clean, from, to, true).catch(() => null),
-    english ? fetchEnglishEntry(clean) : Promise.resolve(null)
+    staged && english ? Promise.resolve(null) : translateGoogle(clean, from, to, true).catch(() => null),
+    english ? fetchEnglishEntry(clean).catch(() => null) : Promise.resolve(null)
   ]);
 
   if (googleResult) {
     result.translation = googleResult.text;
     result.phonetic = googleResult.phonetic;
     result.senses = googleResult.senses || [];
-  } else {
+  } else if (!dictionary) {
     const fallback = await translateMyMemory(clean, from, to).catch(() => ({ text: "" }));
     result.translation = fallback.text;
   }
@@ -687,33 +692,114 @@ async function lookupWord(word, from, to, context, japanese) {
     result.audioUs = dictionary.audioUs;
     result.audioUk = dictionary.audioUk;
     result.phonetic = dictionary.phoneticUs || dictionary.phoneticUk || result.phonetic;
-    result.entries = await translateEntries(dictionary.entries, to);
-    if (!result.translation && result.entries[0] && result.entries[0].items[0]) {
+    result.entries = staged ? dictionary.entries : await translateEntries(dictionary.entries, to);
+    result.dictionaryHeadword = dictionary.headword;
+    result.dictionarySource = "Free Dictionary API / Wiktionary";
+    result.dictionaryUrl = "https://dictionaryapi.dev/";
+    result.dictionaryMatched = true;
+    result.englishForms = dictionary.forms;
+    result.translationSource = /^en(?:-|$)/i.test(to) ? "词典原始英文释义" : "词典释义的机器翻译";
+    if (result.entries[0] && result.entries[0].items[0]) {
       result.translation = result.entries[0].items[0].gloss || result.entries[0].items[0].definition;
     }
   }
+  if (english && !dictionary) {
+    result.lookupNotice = "未找到词典词条，目前仅有单独词语的机器翻译。可对照原句，或查询完整词组。";
+    result.translationSource = "在线翻译（非词典释义）";
+  }
 
-  cacheSet(key, result);
+  if (!english || dictionary) cacheSet(key, { ...result, context: "" });
   return result;
 }
 
+const englishRequests = new Map();
+async function englishRecords(word) {
+  const key = word.toLowerCase();
+  const cached = cacheGet(`english:${key}`);
+  if (cached) return cached;
+  if (englishRequests.has(key)) return englishRequests.get(key);
+  const pending = (async () => {
+    const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(key)}`;
+    const res = await fetch(url, typeof AbortSignal !== "undefined" && AbortSignal.timeout ? { signal: AbortSignal.timeout(6000) } : undefined);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const records = Array.isArray(data) ? data.filter((entry) => entry && Array.isArray(entry.meanings)) : [];
+    if (records.length) cacheSet(`english:${key}`, records);
+    return records;
+  })().catch(() => []).finally(() => englishRequests.delete(key));
+  englishRequests.set(key, pending);
+  return pending;
+}
+
+const ENGLISH_BASE_FORMS = {
+  took: "take", taken: "take", went: "go", gone: "go", came: "come",
+  ate: "eat", eaten: "eat", drank: "drink", drunk: "drink", wrote: "write", written: "write",
+  spoke: "speak", spoken: "speak", saw: "see", seen: "see", gave: "give", given: "give",
+  made: "make", did: "do", done: "do", got: "get", gotten: "get", bought: "buy",
+  brought: "bring", thought: "think", caught: "catch", taught: "teach", felt: "feel",
+  found: "find", knew: "know", known: "know", left: "leave", lost: "lose", met: "meet",
+  ran: "run", said: "say", sold: "sell", sent: "send", sat: "sit", slept: "sleep",
+  stood: "stand", told: "tell", understood: "understand", wore: "wear", worn: "wear",
+  broke: "break", broken: "break", chose: "choose", chosen: "choose", drove: "drive", driven: "drive"
+};
+
 async function fetchEnglishEntry(word) {
-  const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = await res.json();
-  const entry = Array.isArray(data) ? data[0] : null;
-  if (!entry) return null;
-  const sounds = classifyPhonetics(entry.phonetics || []);
-  const entries = (entry.meanings || []).slice(0, 3).map((meaning) => ({
+  const surface = word.toLowerCase();
+  let records = await englishRecords(surface);
+  let headword = surface;
+  const forms = [];
+  // Follow explicit dictionary form relations first. Do not turn saw into see
+  // or axes into axe merely because a suffix/irregular table suggests it.
+  const relation = /^(?:simple past(?: tense)?(?: and past participle)?|past tense(?: and past participle)?|past participle|present participle|third-person singular(?: simple present(?: indicative)?)|plural)(?: form)? of [“"']?([a-z]+)[”"']?[.\s]*$/i;
+  const candidates = [...new Set(records.flatMap((entry) => entry.meanings.flatMap((meaning) =>
+    (meaning.definitions || []).map((item) => String(item.definition || "").match(relation)?.[1]?.toLowerCase()).filter(Boolean))))];
+  // Some API entries for inflections repeat the base definitions and omit the
+  // form relation. Explicit known forms can still link to a verified entry;
+  // direct homograph senses (a saw, the left) remain intact.
+  if (ENGLISH_BASE_FORMS[surface] && !candidates.includes(ENGLISH_BASE_FORMS[surface])) candidates.push(ENGLISH_BASE_FORMS[surface]);
+  if (!records.length && /^[a-z]+$/.test(surface)) {
+    if (/ies$/.test(surface)) candidates.push(surface.slice(0, -3) + "y");
+    else if (/ied$/.test(surface)) candidates.push(surface.slice(0, -3) + "y");
+    else if (/(?:ing|ed)$/.test(surface)) {
+      const stem = surface.replace(/(?:ing|ed)$/, "");
+      if (/([b-df-hj-np-tv-z])\1$/.test(stem)) candidates.push(stem.slice(0, -1));
+      candidates.push(stem + "e", stem);
+    } else if (/s$/.test(surface) && !/ss$/.test(surface)) {
+      if (/es$/.test(surface)) candidates.push(surface.slice(0, -2));
+      candidates.push(surface.slice(0, -1));
+    }
+  }
+  const bases = await Promise.all(candidates.filter((item) => item !== surface && item.length > 1).slice(0, 3)
+    .map(async (lemma) => ({ lemma, records: await englishRecords(lemma) })));
+  const formOnly = records.length && records.every((entry) => entry.meanings.every((meaning) =>
+    (meaning.definitions || []).every((item) => relation.test(item.definition || ""))));
+  const sourceRecords = records;
+  if (formOnly && bases.some((base) => base.records.length)) records = [];
+  for (const base of bases.filter((item) => item.records.length)) {
+    forms.push({ surface: word, lemma: base.lemma });
+    if (!records.length) headword = base.lemma;
+    records = [...records, ...base.records];
+  }
+  if (formOnly && records !== sourceRecords) records.push(...sourceRecords);
+  if (bases.length === 1 && bases[0].records.length && sourceRecords.length && sourceRecords.every((entry) => entry.meanings.every((meaning) => meaning.partOfSpeech === "verb"))) headword = bases[0].lemma;
+  if (!records.length) return null;
+  const sounds = classifyPhonetics(records[0].phonetics || []);
+  const seen = new Set();
+  const surfaceParts = new Set(sourceRecords.flatMap((record) => record.meanings.map((meaning) => meaning.partOfSpeech)));
+  const entries = records.flatMap((record) => record.meanings.map((meaning) => ({
     pos: meaning.partOfSpeech || "",
-    items: (meaning.definitions || []).slice(0, 2).map((item) => ({
-      definition: item.definition || "",
-      example: item.example || "",
-      synonyms: (item.synonyms || meaning.synonyms || []).slice(0, 4)
+    contextEligible: !forms.length || surfaceParts.size !== 1 || surfaceParts.has(meaning.partOfSpeech),
+    headword: record.word || headword,
+    items: (meaning.definitions || []).filter((item) => {
+      const key = `${meaning.partOfSpeech}:${item.definition}`;
+      if (!item.definition || seen.has(key)) return false;
+      seen.add(key); return true;
+    }).map((item) => ({
+      definition: item.definition, example: item.example || "",
+      synonyms: [...new Set([...(item.synonyms || []), ...(meaning.synonyms || [])])].slice(0, 6)
     }))
-  }));
-  return Object.assign(sounds, { entries });
+  }))).filter((entry) => entry.items.length);
+  return Object.assign(sounds, { entries, headword, forms });
 }
 
 function classifyPhonetics(phonetics) {
@@ -744,10 +830,10 @@ async function translateEntries(entries, to) {
   entries.forEach((entry) => {
     entry.items.forEach((item) => definitions.push(item.definition));
   });
-  const glosses = await translateLines(definitions, "en", to);
+  const glosses = /^en(?:-|$)/i.test(to) ? definitions : await translateLines(definitions.slice(0, 6), "en", to);
   let index = 0;
   return entries.map((entry) => ({
-    pos: entry.pos,
+    ...entry,
     items: entry.items.map((item) => {
       const gloss = glosses[index] || "";
       index += 1;

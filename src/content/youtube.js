@@ -1297,6 +1297,7 @@
     const english = String(from || "").toLowerCase().startsWith("en");
     const japanese = from === "ja" ? data.japanese || sourceAnalysis : null;
     const savedWord = japanese?.lemma || data.word;
+    const detailed = (english || japanese) && typeof lmWordCard !== "undefined";
     const accent = state.settings.accent === "uk" ? "uk" : "us";
     const entries = data.entries || [];
     const entryHtml = entries.length
@@ -1329,17 +1330,14 @@
       <div class="lm-dict-head">
         <div>
           <div class="lm-dict-word">${escapeHtml(data.word)}</div>
+          ${detailed && entries.length ? '<div class="lm-card-muted">词典首义 · 更多含义见下方</div>' : ""}
           <div class="lm-dict-trans">${escapeHtml(data.translation || "")}</div>
         </div>
         <div class="lm-dict-actions"><button data-known="1">${japanese && japaneseKnown(japanese) ? "已认识 · 点击取消" : "认识"}</button></div>
       </div>
       ${accents}
-      ${japanese && typeof lmJapaneseUi !== "undefined" ? lmJapaneseUi.cardHtml(japanese) : ""}
-      ${entryHtml}
-      ${japanese && data.dictionarySource ? `<div class="lm-def">词典：${escapeHtml(data.dictionarySource)}${data.dictionaryDate ? ` · ${escapeHtml(data.dictionaryDate)}` : ""}</div>` : ""}
-      ${japanese && data.translationSource ? `<div class="lm-def">译文来源：${escapeHtml(data.translationSource)}</div>` : ""}
-      ${japanese && data.lookupNotice ? `<p class="lm-ja-note">${escapeHtml(data.lookupNotice)}</p>` : ""}
-      <div class="lm-dict-context">${escapeHtml(cue?.text || "")}</div>
+      ${japanese && typeof lmJapaneseUi !== "undefined" ? `<details class="lm-card-morphology"><summary>词形与语法 · ${escapeHtml(japanese.lemma || data.word)}</summary>${lmJapaneseUi.cardHtml(japanese)}</details>` : ""}
+      ${detailed ? lmWordCard.html(data, cue?.text || "", from) : `${entryHtml}<div class="lm-dict-context">${escapeHtml(cue?.text || "")}</div>`}
       <button class="lm-dict-save">加入生词本</button>
     `;
     ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
@@ -1393,6 +1391,16 @@
         if (hoverWord?.isConnected) placeDict(hoverWord);
       }
     });
+    if (detailed) {
+      const anchor = hoverWord, cardToken = state.dictToken, vocabButton = ui.vocabButton;
+      lmWordCard.bind(ui.dict, {
+        data, context: cue?.text || "", from, to: state.settings.nativeLang, send,
+        isCurrent: () => cardToken === state.dictToken,
+        onSaveMeaning: (meaning) => vocabButton.saveMeaning(meaning),
+        onQuery: (surface) => showDict(anchor, { surface, lang: from, context: cue?.text || "" }),
+        onResize: () => { if (anchor?.isConnected && dictOpen()) placeDict(anchor); }
+      });
+    }
     if (hoverWord && hoverWord.isConnected) placeDict(hoverWord);
   }
 
@@ -1451,6 +1459,7 @@
   }
 
   function pointerInDictZone() {
+    if (ui.dict?.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return true;
     if (hoverWord && hoverWord.matches(":hover")) return true;
     if (ui.bridge && ui.bridge.matches(":hover")) return true;
     if (ui.dict && ui.dict.matches(":hover")) return true;
@@ -1507,6 +1516,7 @@
     const res = await send("LM_LOOKUP", {
       word,
       from,
+      staged: true,
       to: state.settings.nativeLang,
       context: cue?.text || "",
       ...(analysis ? { japanese: analysis } : {}),
