@@ -6,6 +6,7 @@
   const shards = new Map();
   const sentences = new Map();
   const baseReadings = new Map();
+  const lexicalResults = new Map();
   const normalized = (text) => String(text || "").normalize("NFC");
   const indexKey = (text) => lmJapanese.toHiragana(normalized(text).normalize("NFKC"));
   const put = (map, key, value, limit) => {
@@ -241,16 +242,24 @@
     const surface = normalized(word).trim();
     if (!surface || surface.length > 500) throw new Error("invalid_word");
     const analysis = await resolveAnalysis(surface, String(context || ""), hint);
-    let dict = await dictionary().catch(() => null);
-    let lexical = dict ? lexicalEntries(dict, analysis) : { entries: [], headword: analysis.lemma };
-    // Commonness is a learning hint, not a filter on the meanings of a word.
-    const [noun, verb] = analysis.parts || [];
-    const extendedKey = noun?.pos === "名詞" && noun.posDetail?.[0] === "サ変接続" && verb?.lemma === "する" && analysis.lemma === noun.lemma + "する"
-      ? noun.lemma : analysis.lemma;
-    const extended = await extendedDictionary(extendedKey).catch(() => null);
-    if (extended) {
-      const complete = lexicalEntries(extended, analysis);
-      if (complete.entries.length) { dict = extended; lexical = complete; }
+    const lexicalKey = JSON.stringify([analysis.lemma, analysis.baseReading, analysis.pos, analysis.posDetail]);
+    const remembered = lexicalResults.get(lexicalKey);
+    let dict = remembered?.dictionary || await dictionary().catch(() => null);
+    let lexical = remembered?.lexical || (dict ? lexicalEntries(dict, analysis) : { entries: [], headword: analysis.lemma });
+    if (!remembered) {
+      // Commonness is a learning hint, not a filter on the meanings of a word.
+      const [noun, verb] = analysis.parts || [];
+      const extendedKey = noun?.pos === "名詞" && noun.posDetail?.[0] === "サ変接続" && verb?.lemma === "する" && analysis.lemma === noun.lemma + "する"
+        ? noun.lemma : analysis.lemma;
+      const extended = await extendedDictionary(extendedKey).catch(() => null);
+      if (extended) {
+        const complete = lexicalEntries(extended, analysis);
+        if (complete.entries.length) { dict = extended; lexical = complete; }
+      }
+      // Retain only matched records, never an entire shard index. Returning to
+      // a word after visiting other shards no longer decompresses it again.
+      if (extended && dict && lexical.entries.length) put(lexicalResults, lexicalKey,
+        { lexical, dictionary: { tags: dict.tags, date: dict.date } }, 300);
     }
     const records = lexical.entries;
     const chosen = records;
@@ -268,7 +277,8 @@
     const definitions = entries.map((entry) => entry.items[0].definition);
     const [translated, glosses] = await Promise.all([
       definitions.length ? Promise.resolve({ text: "" }) : bounded(translateText(analysis.surface, "ja", to), { text: "" }),
-      /^en(?:-|$)/i.test(to) ? Promise.resolve(definitions) : staged ? Promise.resolve([]) : bounded(translateLines(definitions.slice(0, 6), "en", to), [])
+      /^en(?:-|$)/i.test(to) ? Promise.resolve(definitions) : staged ? Promise.resolve(definitions.map((definition) =>
+        typeof cacheGet === "function" ? cacheGet(`t:en:${to}:${definition.replace(/\s+/g, " ").trim()}`)?.text || "" : "")) : bounded(translateLines(definitions.slice(0, 6), "en", to), [])
     ]);
     entries.forEach((entry, index) => { entry.items[0].gloss = glosses[index] || ""; });
     if (chosen.length === 1) analysis.entryId = String(chosen[0].id);

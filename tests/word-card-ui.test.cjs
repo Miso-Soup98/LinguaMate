@@ -69,6 +69,15 @@ test('shared English/Japanese cards expose context, late meanings, retry, select
       check(container.querySelector('.lm-example-translation').textContent==='他们坐在河岸上。','dictionary examples can be translated independently');
       const input=container.querySelector('.lm-card-query input');input.value='take off';container.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
       check(lastQuery==='take off','manual query passes the whole phrase');
+      const translatedRequests=requests.filter(r=>r.type==='LM_TRANSLATE'||r.type==='LM_GLOSS_TRANSLATE').length;
+      mount({word:'bank',entries:[{pos:'noun',items:meanings}]},'They sat on the river bank.');
+      check(container.querySelector('.lm-context-translation').textContent==='他们坐在河岸上。','reopening a word renders its cached sentence immediately without a loading flash');
+      check(container.querySelector('[data-sense="0"] .lm-gloss').textContent.includes('译义：'),'reopening hydrates translated meanings before the first render');
+      await settle();
+      check(requests.filter(r=>r.type==='LM_TRANSLATE'||r.type==='LM_GLOSS_TRANSLATE').length===translatedRequests,'reopening a word and sentence does not resend completed translation requests');
+      lmWordCard.invalidateContext('en','zh-CN','They sat on the river bank.');
+      mount({word:'bank',entries:[{pos:'noun',items:meanings}]},'They sat on the river bank.');await settle();
+      check(requests.filter(r=>r.type==='LM_TRANSLATE'||r.type==='LM_GLOSS_TRANSLATE').length===translatedRequests+1,'manual subtitle retranslation can invalidate sentence reuse without discarding cached word meanings');
       hold=true;mount({word:'old',entries:[]},'An old sentence.');await settle();
       const resolve=resumeOld;hold=false;mount({word:'new',entries:[]},'A new sentence.');await settle();
       const before=container.textContent;resolve({ok:true,result:{text:'STALE_TRANSLATION'}});await settle();

@@ -105,7 +105,7 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       const changingLine=document.createElement('div');document.body.append(changingLine);
       y.renderWords(changingLine,'食べた','ja');y.renderWords(changingLine,'hello','en');await settleFixture();
       fixtureCheck('A late Japanese analysis cannot overwrite a line switched to English',changingLine.textContent==='hello'&&!changingLine.querySelector('.lm-ja-word'));
-      window.fixturePauseLookup=true;const lateCard=y.showDict(words[0]);
+      window.fixturePauseLookup=true;const lateCard=y.showDict(words[1]);
       y.state.cues=[{start:0,end:9000,text:'猫'}];y.renderCurrent();
       window.fixtureResumeLookup();window.fixturePauseLookup=false;await lateCard;await settleFixture();
       fixtureCheck('A late word lookup cannot reopen a card after its subtitle anchor disappears',y.ui.dict.classList.contains('lm-hidden'));
@@ -179,7 +179,7 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       fixtureCheck('Original caption remains until the next source timestamp',lmJapaneseUi.textWithoutReading(y.ui.learningLine)==='最初の字幕です。');
       v.currentTime=4;v.dispatchEvent(new Event('timeupdate'));await settleFixture();
       fixtureCheck('Caption switches on video timeupdate without waiting for translation or merged paragraphs',lmJapaneseUi.textWithoutReading(y.ui.learningLine)==='次の字幕です。'&&y.ui.panelBody.querySelector('.lm-cue.active').dataset.index==='1');
-      const trackRequests=[];let missingTranslationTrack=false;
+      const trackRequests=[];let missingTranslationTrack=false, changedSource=false, sourceAnchorBeforeTranslation;
       window.addEventListener('message',event=>{
         const message=event.data;if(message?.source!=='linguamate-content')return;
         let data;
@@ -187,8 +187,9 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
         if(message.type==='LM_GET_TRACKS')data={videoId:'fixture',tracks:[{languageCode:'ja',kind:'asr',baseUrl:'https://example.test/ja'}]};
         if(message.type==='LM_FETCH_TRACK'){
           trackRequests.push(message.data);
+          if(message.data.tlang)sourceAnchorBeforeTranslation=y.ui.panelBody.querySelector('.lm-cue-learning');
           data={text:message.data.tlang&&missingTranslationTrack?'':JSON.stringify({events:[
-            {tStartMs:0,dDurationMs:7000,segs:[{utf8:message.data.tlang?'第一条完整译文。':'最初の字幕です。'}]},
+            {tStartMs:0,dDurationMs:7000,segs:[{utf8:message.data.tlang?'第一条完整译文。':changedSource?'新しい字幕です。':'最初の字幕です。'}]},
             {tStartMs:4000,dDurationMs:3000,segs:[{utf8:message.data.tlang?'第二条完整译文。':'次の字幕です。'}]}
           ]})};
         }
@@ -198,13 +199,17 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       let translationCount=fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').length;
       await y.loadCaptions(true);await settleFixture();
       fixtureCheck('Loading Japanese captions retrieves the entire timed translation track',trackRequests.length===2&&trackRequests[1].tlang==='zh-Hans'&&y.state.nativeCues[1].text==='第二条完整译文。');
+      fixtureCheck('Translated track arrival preserves the existing source word container',y.ui.panelBody.querySelector('.lm-cue-learning')===sourceAnchorBeforeTranslation);
       fixtureCheck('A successful timed track requires no separate network translation for every caption',fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').length===translationCount&&y.ui.nativeLine.textContent==='第一条完整译文。');
       missingTranslationTrack=true;
       await y.loadCaptions(true);await settleFixture();
-      fixtureCheck('A missing timed track falls back to translating displayed source cues',y.state.nativeTrackLoading===false&&y.state.nativeCues[0].text==='整句译文：最初の字幕です。'&&fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').length>translationCount);
+      fixtureCheck('A temporarily missing translation track retains the previously usable captions',y.state.nativeTrackLoading===false&&y.state.nativeCues[0].text==='第一条完整译文。'&&y.ui.panelBody.querySelector('.lm-cue-learning')===sourceAnchorBeforeTranslation);
+      changedSource=true;
+      await y.loadCaptions(true);await settleFixture();
+      fixtureCheck('A missing timed track for new source cues falls back to sentence translation',y.state.nativeTrackLoading===false&&y.state.nativeCues[0].text==='整句译文：新しい字幕です。'&&fixtureMessages.filter(m=>m.type==='LM_TRANSLATE').length>translationCount);
     `;
     const finish = `(async()=>{try{${checks}\n document.title='LM_JA_YT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:true,checks:fixtureChecks}))));}catch(error){document.title='LM_JA_YT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:error.stack,checks:fixtureChecks}))));}})();`;
-    const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button", "word-card"].map((name) => source(`src/shared/${name}.js`)), content, finish];
+    const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button", "word-card", "dict-session"].map((name) => source(`src/shared/${name}.js`)), content, finish];
     const html = `<!doctype html><meta charset="utf-8"><title>pending</title><style>body{margin:0;background:#111}video{display:block;width:800px;height:450px}${source("src/content/youtube.css")}</style><div class="html5-video-player"><video></video></div>${scripts.map((script) => `<script>${script.replace(/<\/script/gi, "<\\/script")}</script>`).join("")}`;
     const file = path.join(directory, "japanese.html");
     fs.writeFileSync(file, html, "utf8");

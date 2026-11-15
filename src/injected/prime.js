@@ -15,6 +15,8 @@ function linguaMateInstallPrimeHook() {
   let lastManifestMessage = null;
   let sessionScope = "";
   let sessionGeneration = 0;
+  const trackTexts = new Map();
+  const trackLoads = new Map();
 
   function playbackScope() {
     const url = new URL(location.href);
@@ -32,6 +34,8 @@ function linguaMateInstallPrimeHook() {
       trackLanguages.clear();
       playbackUrl = envelope = "";
       pulling = null;
+      trackTexts.clear();
+      trackLoads.clear();
     }
     return { scope, generation: sessionGeneration, adAtRequest: adIndicatorVisible() };
   }
@@ -133,7 +137,25 @@ function linguaMateInstallPrimeHook() {
     });
   }
 
+  async function readResponse(url, options) {
+    const controller = new AbortController();
+    let timer;
+    try {
+      return await Promise.race([
+        (async () => {
+          const response = await (originalFetch || fetch)(url, { ...options, signal: controller.signal });
+          if (!response.ok) return null;
+          return { text: await response.text(), type: response.headers.get("content-type") || "" };
+        })(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => { controller.abort(); reject(new Error("prime_subtitle_timeout")); }, 8000);
+        })
+      ]);
+    } finally { clearTimeout(timer); }
+  }
+
   async function fetchText(url, session) {
+    if (trackTexts.has(url)) return trackTexts.get(url);
     const attempts = [
       { credentials: "omit", mode: "cors" },
       { credentials: "include", mode: "cors" }
@@ -141,10 +163,15 @@ function linguaMateInstallPrimeHook() {
     for (const options of attempts) {
       if (!isCurrentSession(session)) return "";
       try {
-        const response = await (originalFetch || fetch)(url, options);
-        if (!response.ok) continue;
-        const text = await response.text();
-        if (text && text.trim().length > 20) return text;
+        const response = await readResponse(url, options);
+        const text = response?.text || "";
+        if (text.trim().length > 20 && text.length <= 2000000 && /(?:<tt\b|<(?:[\w.-]+:)?tt\b|^\s*WEBVTT)/i.test(text)) {
+          if (isCurrentSession(session)) {
+            if (trackTexts.size >= 4) trackTexts.delete(trackTexts.keys().next().value);
+            trackTexts.set(url, text);
+          }
+          return text;
+        }
       } catch (err) {
         /* try the next credential mode */
       }
@@ -162,8 +189,14 @@ function linguaMateInstallPrimeHook() {
     });
     const chosen = ranked.find((item) => item.lang.toLowerCase().split(/[-_]/)[0] === want) || ranked.find((item) => !item.lang);
     if (!chosen) return;
-    const text = await fetchText(chosen.url, session);
-    if (preferredLang.toLowerCase().split("-")[0] === want) publish(chosen.url, text, chosen.lang, "content", session);
+    const key = `${want}:${chosen.url}`;
+    if (trackLoads.has(key)) return trackLoads.get(key);
+    const pending = (async () => {
+      const text = await fetchText(chosen.url, session);
+      if (preferredLang.toLowerCase().split("-")[0] === want) publish(chosen.url, text, chosen.lang, "content", session);
+    })().finally(() => { if (trackLoads.get(key) === pending) trackLoads.delete(key); });
+    trackLoads.set(key, pending);
+    return pending;
   }
 
   async function harvestJson(text, session) {
@@ -222,7 +255,7 @@ function linguaMateInstallPrimeHook() {
     if (pulling || !playbackUrl || !envelope) return;
     pulling = session;
     try {
-      const response = await (originalFetch || fetch)(playbackUrl, {
+      const response = await readResponse(playbackUrl, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -236,7 +269,7 @@ function linguaMateInstallPrimeHook() {
           }
         })
       });
-      inspect(playbackUrl, await response.text(), response.headers.get("content-type"), session);
+      if (response) inspect(playbackUrl, response.text, response.type, session);
     } catch (err) {
       /* the player may not have started yet */
     } finally {

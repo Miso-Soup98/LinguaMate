@@ -9,15 +9,17 @@ const source = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\
 function harness() {
   const requests = [];
   const pending = [];
+  const invalidated = [];
   const context = vm.createContext({
     window: { addEventListener() {} }, document: { addEventListener() {}, readyState: 'loading' },
     chrome: { storage: { onChanged: { addListener() {} } } }, setInterval() {},
     lmMergeSettings: () => ({ enabled: true, showNative: true, learningLang: 'ja', nativeLang: 'zh-CN' }),
+    lmWordCard: { invalidateContext: (...args) => invalidated.push(args) },
     lmSendMessage: (type, message) => { requests.push({ type, ...message }); return new Promise(resolve => pending.push(resolve)); }
   });
   const code = source('src/content/youtube.js').replace('  else boot();', '  else boot();\n globalThis.fixture={state,parseEvents,alignCues,queueTranslation,currentIndex,installNativeTranslations};');
   vm.runInContext(code, context);
-  return { ...context.fixture, requests, pending };
+  return { ...context.fixture, requests, pending, invalidated };
 }
 const plain = value => JSON.parse(JSON.stringify(value));
 const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
@@ -72,6 +74,31 @@ test('translation alignment keeps every overlapping sentence instead of only the
   assert.equal(aligned[1].text, '');
 });
 
+test('indexed translation alignment preserves nested overlaps, unordered tracks, boundaries and duplicate text', () => {
+  const { alignCues } = harness();
+  const original = [
+    {start:7000,end:8000}, {start:1000,end:3000}, {start:3000,end:4000}, {start:12000,end:13000}
+  ];
+  const translated = [
+    {start:7000,end:9000,text:'late'}, {start:0,end:10000,text:'long'},
+    {start:1000,end:2000,text:'same'}, {start:2000,end:3000,text:'same'},
+    {start:3000,end:4000,text:'boundary'}
+  ];
+  assert.deepEqual(plain(alignCues(original, translated)).map(cue=>cue.text), [
+    'long late', 'long same', 'long boundary', ''
+  ]);
+  assert.equal(translated[0].text, 'late', 'alignment never reorders its input track');
+});
+
+test('long-video translation tracks retain exact matching lines and gaps', () => {
+  const { alignCues } = harness();
+  const original = Array.from({length:6000}, (_,index)=>({start:index*1200,end:index*1200+900}));
+  const translated = original.filter((_cue,index)=>index%7!==0).map(cue=>({...cue,text:`line ${cue.start}`}));
+  const aligned = alignCues(original, translated);
+  assert.equal(aligned.length, 6000);
+  aligned.forEach((cue,index)=>assert.equal(cue.text,index%7===0?'':`line ${index*1200}`));
+});
+
 test('translation queue caps requests, deduplicates and ignores a previous language generation', async () => {
   const h = harness();
   h.state.directTranslation = true;
@@ -101,6 +128,7 @@ test('failed translation does not loop and explicit retry can recover', async ()
   assert.equal(h.state.cues[0].translationError, true);
   h.queueTranslation(0);assert.equal(h.requests.length, 1);
   h.queueTranslation(0, true);assert.equal(h.requests.length, 2);
+  assert.deepEqual(h.invalidated, [['ja', 'zh-CN', '雨です。']], 'explicit retranslation invalidates the matching word-card context');
   h.pending[1]({ ok: true, result: { text: '下雨了。' } });await settle();
   assert.equal(h.state.nativeCues[0].text, '下雨了。');
   assert.equal(h.state.cues[0].translationError, false);

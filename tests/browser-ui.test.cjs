@@ -16,6 +16,8 @@ const bridge = `
 window.setInterval = () => 0;
 window.fixtureData = {sync:{},local:{vocab:[],known:{}}};
 window.fixtureListeners = [];
+window.fixtureLookups = [];
+window.fixtureDeferredLookup = false;
 function area(name) {
   return {
     async get(defaults) { return structuredClone({...defaults,...fixtureData[name]}); },
@@ -32,7 +34,11 @@ function area(name) {
 window.chrome = {
  runtime:{id:'browser-regression',onInstalled:{addListener(){}},onMessage:{addListener(){}},
   sendMessage(message,callback){
-    if(message.type==='LM_LOOKUP') return callback({ok:true,result:{word:message.word,translation:'fixture meaning'}});
+    if(message.type==='LM_LOOKUP') {
+      fixtureLookups.push({message,callback});
+      if(!fixtureDeferredLookup) callback({ok:true,result:{word:message.word,translation:'fixture meaning'}});
+      return;
+    }
     if(message.type==='LM_TRANSLATE') return callback({ok:true,result:{text:message.text}});
     if(message.type==='LM_JA_ANALYZE') return callback({ok:true,tokens:Array.from(new Intl.Segmenter('ja',{granularity:'word'}).segment(message.text),part=>({text:part.segment,surface:part.segment,lemma:part.segment,isWordLike:part.isWordLike,reading:'',baseReading:'',pos:'',conjugation:{labels:[]}}))});
     handleMessage(message).then(callback,error=>callback({ok:false,error:String(error.message)}));
@@ -44,6 +50,65 @@ window.fixtureResults = [];
 window.fixtureCheck = (label,passed) => { if(!passed) throw new Error(label); fixtureResults.push(label); document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:'running',checks:fixtureResults})))); };
 window.addEventListener('error',event=>{document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:event.message,checks:fixtureResults}))));});
 window.settleFixture = async () => { for(let i=0;i<100;i++) await Promise.resolve(); };
+window.checkWordInteraction = async (platform, label) => {
+  const words = platform.ui.learningLine.querySelectorAll('.lm-word');
+  const first = words[0], second = words[1];
+  fixtureDeferredLookup = true;
+  let playbackClicks = 0;
+  platform.ui.learningLine.addEventListener('click', () => playbackClicks++);
+  second.click(); await settleFixture();
+  fixtureCheck(label+' clicking a word immediately opens its loading card', fixtureLookups.at(-1).message.word===second.dataset.word && platform.ui.dict.textContent.includes('正在查询'));
+  fixtureCheck(label+' word clicks do not bubble into seek/play controls',playbackClicks===0);
+  const side = platform.ui.dict.dataset.anchorSide;
+  const loading = platform.ui.dict.getBoundingClientRect();
+  const nearby = first.getBoundingClientRect();
+  fixtureCheck(label+' the neighbouring word remains reachable with a card open',first.contains(document.elementFromPoint(nearby.left+nearby.width/2,nearby.top+nearby.height/2)));
+  fixtureLookups.at(-1).callback({ok:true,result:{word:second.dataset.word,translation:'second meaning',entries:[{pos:'noun',items:Array.from({length:6},(_,i)=>({definition:'A long dictionary meaning '+i+' with enough detail to expand the card vertically.',gloss:'已经翻译的详细义项 '+i}))}]}});
+  await settleFixture();
+  const expanded = platform.ui.dict.getBoundingClientRect();
+  fixtureCheck(label+' loaded definitions preserve the edge next to the word',platform.ui.dict.dataset.anchorSide===side&&Math.abs(loading[side==='below'?'top':'bottom']-expanded[side==='below'?'top':'bottom'])<1);
+  fixtureCheck(label+' expanded definitions stay within the viewport',expanded.top>=7&&expanded.bottom<=innerHeight-7);
+  const count = fixtureLookups.length;
+  first.click();
+  fixtureCheck(label+' a previously viewed word returns synchronously without a loading flash',fixtureLookups.length===count&&!platform.ui.dict.textContent.includes('正在查询')&&platform.ui.dict.querySelector('.lm-dict-word').textContent===first.dataset.word);
+  fixtureCheck(label+' selection highlight follows the current word',first.classList.contains('lm-word-active')&&!second.classList.contains('lm-word-active'));
+  const range = document.createRange(); range.selectNodeContents(second);
+  getSelection().removeAllRanges();getSelection().addRange(range);
+  second.click();
+  fixtureCheck(label+' selecting text does not start an incidental lookup',fixtureLookups.length===count);
+  getSelection().removeAllRanges();fixtureDeferredLookup=false;platform.hideDict();
+  // Keep real DOM event propagation and hit testing, but advance hover timers
+  // deterministically. Native :hover is supplied explicitly in headless mode.
+  const originalSet = window.setTimeout, originalClear = window.clearTimeout;
+  const timers = new Map(); let clock = 0, serial = 0;
+  window.setTimeout = (fn,delay=0) => {const id=++serial;timers.set(id,{fn,at:clock+delay});return id;};
+  window.clearTimeout = id => timers.delete(id);
+  const advance = ms => {const until=clock+ms;for(;;){const next=[...timers].filter(([,t])=>t.at<=until).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;timers.delete(next[0]);clock=next[1].at;next[1].fn();}clock=until;};
+  for(const word of words){const matches=word.matches.bind(word);word.matches=selector=>selector===':hover'?word.fixtureHover===true:matches(selector);}
+  const enter = (word,from=null) => {
+    if(from){from.fixtureHover=false;from.dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:word}));}
+    word.fixtureHover=true;word.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,relatedTarget:from}));
+  };
+  try {
+    enter(first);advance(150);
+    const ruby=document.createElement('ruby'),rt=document.createElement('rt');rt.textContent='reading';ruby.append(rt);first.append(ruby);
+    first.dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:rt}));
+    rt.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,relatedTarget:first}));
+    advance(69);fixtureCheck(label+' initial hover requires deliberate intent',platform.ui.dict.classList.contains('lm-hidden'));
+    advance(1);await settleFixture();
+    fixtureCheck(label+' ruby movement does not restart the initial hover delay',first.classList.contains('lm-word-active')&&!platform.ui.dict.classList.contains('lm-hidden'));
+    enter(second,first);advance(119);
+    fixtureCheck(label+' quick crossings retain the selected word',first.classList.contains('lm-word-active'));
+    advance(1);await settleFixture();
+    fixtureCheck(label+' continuous selection switches at 120 milliseconds',second.classList.contains('lm-word-active')&&!first.classList.contains('lm-word-active'));
+    enter(first,second);advance(60);enter(second,first);advance(500);
+    fixtureCheck(label+' returning to the selected word cancels the intermediate switch',second.classList.contains('lm-word-active')&&fixtureLookups.length===count);
+    ruby.remove();platform.hideDict();
+  } finally {
+    window.setTimeout=originalSet;window.clearTimeout=originalClear;
+    for(const word of words){delete word.matches;delete word.fixtureHover;}
+  }
+};
 `;
 
 const youtubeCheck = `
@@ -67,6 +132,7 @@ let button=y.ui.dict.querySelector('.lm-dict-save');button.click();await y.ui.vo
 fixtureCheck('YouTube persists a confirmed save',fixtureData.local.vocab.length===1&&button.getAttribute('aria-pressed')==='true');
 button.click();await y.ui.vocabButton.pending;
 fixtureCheck('YouTube second click removes the saved record',fixtureData.local.vocab.length===0&&button.getAttribute('aria-pressed')==='false');
+await checkWordInteraction(y,'YouTube');
 v.currentTime=10;y.renderCurrent();
 fixtureCheck('YouTube hides expired captions but keeps replay navigation',y.ui.learningLine.classList.contains('lm-hidden')&&y.state.index===0&&y.state.activeIndex===-1);
 await Promise.all([chrome.storage.sync.set({enabled:false}),chrome.storage.local.set({vocab:[]})]);await settleFixture();
@@ -96,6 +162,7 @@ let button=p.ui.dict.querySelector('.lm-dict-save');button.click();await p.ui.vo
 fixtureCheck('Prime dictionary saves through the real storage queue',fixtureData.local.vocab.length===1&&button.getAttribute('aria-pressed')==='true');
 button.click();await p.ui.vocabButton.pending;
 fixtureCheck('Prime dictionary removes through the real storage queue',fixtureData.local.vocab.length===0&&button.getAttribute('aria-pressed')==='false');
+await checkWordInteraction(p,'Prime');
 v.currentTime=2;p.renderCurrent();fixtureCheck('Prime clears subtitle gaps',p.ui.learningLine.classList.contains('lm-hidden')&&p.state.index===0);
 await chrome.storage.sync.set({enabled:false});await settleFixture();
 fixtureCheck('Prime disable restores the native caption layer',p.ui.root.classList.contains('lm-hidden')&&!document.documentElement.classList.contains('lm-prime-captions'));
@@ -116,15 +183,15 @@ for (const platform of ["youtube", "prime"]) {
     try {
       let content = source(`src/content/${platform}.js`);
       const expose = platform === "prime"
-        ? "window.fixture={state,ui,mount,applyTrack,renderCurrent,showDict,togglePanel};"
-        : "window.fixture={state,ui,ensureUi,renderTranscript,renderCurrent,showDict,persist,onTick,replacePageRequest(fn){requestPage=fn;}};";
+        ? "window.fixture={state,ui,mount,applyTrack,renderCurrent,showDict,hideDict,togglePanel};"
+        : "window.fixture={state,ui,ensureUi,renderTranscript,renderCurrent,showDict,hideDict,persist,onTick,replacePageRequest(fn){requestPage=fn;}};";
       content = platform === "prime" ? content.replace("  boot();", expose)
         : content.replace('  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);\n  else boot();', expose);
       const checks = platform === "prime" ? primeCheck : youtubeCheck;
       const finish = `
       (async()=>{try{${checks}\n document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:true,checks:fixtureResults}))));}
       catch(error){document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:error.stack,checks:fixtureResults}))));}})();`;
-      const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button", "word-card", "prime-manifest", "prime-timeline"].map((name) => source(`src/shared/${name}.js`)), content, finish];
+      const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button", "word-card", "dict-session", "prime-manifest", "prime-timeline"].map((name) => source(`src/shared/${name}.js`)), content, finish];
       const html = `<!doctype html><meta charset="utf-8"><title>pending</title><style>body{margin:0;background:#111}video{display:block;width:800px;height:450px}${source("src/content/youtube.css")}${source("src/content/prime.css")}</style><div class="html5-video-player"><video></video></div>${scripts.map((script) => `<script>${script.replace(/<\/script/gi, "<\\/script")}</script>`).join("")}`;
       const file = path.join(directory, `${platform}.html`);
       fs.writeFileSync(file, html, "utf8");

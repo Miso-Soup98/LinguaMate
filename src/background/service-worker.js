@@ -627,6 +627,17 @@ function cacheSet(key, value) {
   }
 }
 
+const translationRequests = new Map();
+async function fetchTranslation(text, from, to) {
+  try {
+    const google = await translateGoogle(text, from, to);
+    if (google.text) return google;
+  } catch (err) {
+    console.warn("google translate failed", err);
+  }
+  return translateMyMemory(text, from, to);
+}
+
 async function translateText(text, from, to, refresh = false) {
   const clean = String(text || "").trim();
   if (!clean) return { text: "", phonetic: "" };
@@ -634,20 +645,31 @@ async function translateText(text, from, to, refresh = false) {
   const key = `t:${from}:${to}:${clean}`;
   const cached = cacheGet(key);
   if (cached && !refresh) return cached;
+  if (refresh) cache.delete(key);
 
-  try {
-    const google = await translateGoogle(clean, from, to);
-    if (google.text) {
-      cacheSet(key, google);
-      return google;
-    }
-  } catch (err) {
-    console.warn("google translate failed", err);
-  }
+  if (!refresh && translationRequests.has(key)) return translationRequests.get(key);
+  const pending = fetchTranslation(clean, from, to).then((result) => {
+    // An explicit retry supersedes older work. A late automatic response must
+    // never replace the user's newer translation in the shared cache.
+    if (result.text && translationRequests.get(key) === pending) cacheSet(key, result);
+    return result;
+  }).finally(() => { if (translationRequests.get(key) === pending) translationRequests.delete(key); });
+  translationRequests.set(key, pending);
+  return pending;
+}
 
-  const fallback = await translateMyMemory(clean, from, to);
-  cacheSet(key, fallback);
-  return fallback;
+function cachedGlossEntries(entries, to) {
+  return entries.map((entry) => ({ ...entry, items: entry.items.map((item) => {
+    const definition = String(item.definition || "").replace(/\s+/g, " ").trim();
+    const gloss = /^en(?:-|$)/i.test(to) ? definition : cacheGet(`t:en:${to}:${definition}`)?.text || item.gloss || "";
+    return { ...item, gloss };
+  }) }));
+}
+
+function hydratedLookup(result, word, context, to) {
+  const entries = cachedGlossEntries(result.entries || [], to);
+  return { ...result, entries, word, context: context || "",
+    translation: entries[0]?.items[0]?.gloss || result.translation };
 }
 
 async function lookupWord(word, from, to, context, japanese, staged = false) {
@@ -656,7 +678,7 @@ async function lookupWord(word, from, to, context, japanese, staged = false) {
   if (/^ja(?:-|$)/i.test(from || "")) return lmJapaneseService.lookup(clean, to || "zh-CN", context, japanese, staged);
   const key = `w:${from}:${to}:${clean.toLowerCase()}:${staged}`;
   const cached = cacheGet(key);
-  if (cached) return { ...cached, word: clean, context: context || "" };
+  if (cached) return hydratedLookup(cached, clean, context, to);
 
   const result = {
     word: clean,
@@ -692,7 +714,7 @@ async function lookupWord(word, from, to, context, japanese, staged = false) {
     result.audioUs = dictionary.audioUs;
     result.audioUk = dictionary.audioUk;
     result.phonetic = dictionary.phoneticUs || dictionary.phoneticUk || result.phonetic;
-    result.entries = staged ? dictionary.entries : await translateEntries(dictionary.entries, to);
+    result.entries = staged ? cachedGlossEntries(dictionary.entries, to) : await translateEntries(dictionary.entries, to);
     result.dictionaryHeadword = dictionary.headword;
     result.dictionarySource = "Free Dictionary API / Wiktionary";
     result.dictionaryUrl = "https://dictionaryapi.dev/";
@@ -850,31 +872,40 @@ async function translateEntries(entries, to) {
 async function translateLines(lines, from, to) {
   const clean = lines.map((line) => String(line || "").replace(/\s+/g, " ").trim());
   if (!clean.some(Boolean) || from === to) return clean;
-  const found = {};
-  clean.forEach((line, index) => {
-    const cached = cacheGet(`t:${from}:${to}:${line}`);
-    if (cached?.text) found[index] = cached.text;
+  const owned = [];
+  const results = clean.map((line, index) => {
+    if (!line) return Promise.resolve("");
+    const key = `t:${from}:${to}:${line}`, cached = cacheGet(key);
+    if (cached?.text) return Promise.resolve(cached.text);
+    let pending = translationRequests.get(key);
+    if (!pending) {
+      let resolve;
+      pending = new Promise((done) => { resolve = done; });
+      translationRequests.set(key, pending);
+      owned.push({ key, line, index, pending, resolve });
+    }
+    return pending.then((result) => result.text || "", () => "");
   });
-  const packed = clean
-    .map((line, index) => (line && !found[index] ? `[${index}] ${line}` : ""))
-    .filter(Boolean)
-    .join("\n");
-  try {
-    const translated = packed ? await translateGoogle(packed, from, to, false) : { text: "" };
-    const pattern = /[\[［](\d+)[\]］]\s*([\s\S]*?)(?=\s*[\[［]\d+[\]］]|$)/g;
-    String(translated.text || "").replace(pattern, (_, index, gloss) => {
-      found[index] = gloss.replace(/\s+/g, " ").trim();
-      if (found[index] && clean[Number(index)]) cacheSet(`t:${from}:${to}:${clean[Number(index)]}`, { text: found[index], phonetic: "" });
-      return "";
-    });
-  } catch (err) {
-    // Individual entries below can still succeed if batch markers were lost.
+  if (owned.length) {
+    const found = new Map();
+    try {
+      const translated = await translateGoogle(owned.map(({ line, index }) => `[${index}] ${line}`).join("\n"), from, to, false);
+      const pattern = /[\[［](\d+)[\]］]\s*([\s\S]*?)(?=\s*[\[［]\d+[\]］]|$)/g;
+      String(translated.text || "").replace(pattern, (_, index, gloss) => {
+        found.set(Number(index), gloss.replace(/\s+/g, " ").trim()); return "";
+      });
+    } catch (_) { /* Missing batch markers use individual requests below. */ }
+    await Promise.all(owned.map(async (item) => {
+      let result = { text: found.get(item.index) || "", phonetic: "" };
+      try { if (!result.text) result = await fetchTranslation(item.line, from, to); } catch (_) {}
+      if (translationRequests.get(item.key) === item.pending) {
+        if (result.text) cacheSet(item.key, result);
+        translationRequests.delete(item.key);
+      }
+      item.resolve(result);
+    }));
   }
-  return Promise.all(clean.map(async (line, index) => {
-    if (!line) return "";
-    if (found[String(index)]) return found[String(index)];
-    try { return (await translateText(line, from, to)).text || ""; } catch (_) { return ""; }
-  }));
+  return Promise.all(results);
 }
 
 async function pronounceClip(text, tl, audioUrl) {

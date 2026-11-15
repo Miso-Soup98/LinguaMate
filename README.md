@@ -27,6 +27,14 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 完整 JSON 备份与恢复，保留词条、掌握记录和复习进度；支持合并或确认后替换
 - 任意网页：右键「用语伴查阅」或「用语伴阅读」
 
+### 加载与连续查词（1.11.1）
+
+- YouTube 和 Prime Video 合并重复字幕请求，复用成功加载的内容；同一字幕轨道再次到达时保留原文、译文及正在查阅的单词。YouTube 临时重读失败时保留已有字幕，切换视频后丢弃旧响应。
+- 译文到达时只更新对应字幕行，避免重建原文、打断查词或原文校正。长视频的双语字幕按时间索引对齐；Prime 优先翻译当前播放位置附近的字幕，跳转后调整队列。
+- 两个平台统一为首次悬停约 220 毫秒、连续切词约 120 毫秒；快速划过不会换卡，点击单词立即查询。当前查阅词会高亮，日语注音内移动不会重新计时。
+- 修复 YouTube 透明区域挡住相邻单词的问题。卡片在加载前选定显示方向，内容展开时保持靠近单词的一边固定，并限制在窗口内。
+- 刚查过的词按语言、原句和日语词形缓存，返回时直接显示；重复原句与释义翻译共用请求。失败可重试，收藏状态继续从生词本确认。
+
 ### 英语与日语单词卡（1.11.0）
 
 - 参考 [Language Reactor 官方指南](https://www.languagereactor.com/help/basic)及实际词典交互，YouTube 和 Prime Video 共用新的单词卡：本句参考、词典义项、例句、词形语法、外部词典与词组查询。
@@ -126,6 +134,12 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Vocabulary notebook, spaced-repetition flashcards, and CSV / Anki export
 - Complete JSON backup and restore preserve vocabulary, known words, and review progress, with merge or confirmed replacement
 - On any page, right-click to look up a selection or read it in LinguaMate
+
+### Loading and word selection (1.11.1)
+
+- Both platforms coalesce repeated caption requests and preserve usable subtitles while refreshing. Translation arrivals update affected lines without rebuilding the source words. YouTube uses indexed timing alignment for long tracks; Prime prioritizes translation near playback and adjusts after seeks.
+- Hover intent is consistent: about 220 ms for the first word and 120 ms between words, with immediate lookup on click. Adjacent words remain reachable, ruby movement does not restart the timer, and the selected word is highlighted.
+- Cards keep the edge beside the word fixed as definitions arrive. Recent lookups, sentence translations and glosses are reused, with context/language separation, bounded caches and retries after failures.
 
 ### Scope
 

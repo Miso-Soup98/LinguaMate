@@ -25,6 +25,8 @@
   let hideTimer = 0;
   let hoverWord = null;
   let hoverTimer = 0;
+  let pendingHoverWord = null;
+  let dictionarySession;
   let lookupToken = 0;
   const playback = { timeline: lmPrimeTimeline.create(), manifest: false, scope: "", last: null, ad: null, pendingTrack: null, pendingTimeline: null };
 
@@ -274,6 +276,7 @@
     });
     document.addEventListener("mouseover", onHover);
     document.addEventListener("mouseout", onLeave);
+    document.addEventListener("click", onWordClick, true);
     window.addEventListener("scroll", onDictViewportChange, true);
     window.addEventListener("resize", onDictViewportChange);
     makeDraggable(ui.toolbar, ui.toolbar, "lmPrimeToolbar");
@@ -693,17 +696,7 @@
       row.dataset.index = String(i);
       row.querySelector(".lm-cue-time").textContent = formatTime(cue.start);
       renderWords(row.querySelector(".lm-cue-learning"), cue.text, state.trackLang || state.settings.learningLang);
-      let native = row.querySelector(".lm-cue-native");
-      if (state.native[i]) {
-        if (!native) {
-          native = document.createElement("div");
-          native.className = "lm-cue-native";
-          row.appendChild(native);
-        }
-        renderWords(native, state.native[i], state.settings.nativeLang, state.settings.nativeInteractive);
-      } else {
-        native?.remove();
-      }
+      renderNativeCue(i);
     });
     while (ui.cueRows.length > state.cues.length) ui.cueRows.pop().remove();
     ui.activeRow = ui.cueRows[state.activeIndex];
@@ -712,6 +705,19 @@
     if (hoverWord && (!hoverWord.isConnected || hoverWord.closest(".lm-hidden"))) hideDict();
     else if (dictOpen()) placeDict(hoverWord);
     followCurrentCue();
+  }
+
+  function renderNativeCue(index) {
+    const row = ui.cueRows?.[index];
+    if (!row) return;
+    let native = row.querySelector(".lm-cue-native");
+    if (!state.native[index]) { native?.remove(); return; }
+    if (!native) {
+      native = document.createElement("div");
+      native.className = "lm-cue-native";
+      row.appendChild(native);
+    }
+    renderWords(native, state.native[index], state.settings.nativeLang, state.settings.nativeInteractive);
   }
 
   function formatTime(ms) {
@@ -734,24 +740,42 @@
   }
 
   async function translateCues(cues, token) {
+    const language = state.settings.nativeLang;
+    if (state.translationTask?.token === token && state.translationTask.cues === cues && state.translationTask.language === language) return state.translationTask.promise;
+    const job = { cues, token, language, promise: null };
+    state.translationTask = job;
     state.native = new Array(cues.length).fill("");
     const size = 30;
-    for (let start = 0; start < cues.length; start += size) {
-      if (token !== state.token || !state.settings.enabled) return;
-      const slice = cues.slice(start, start + size);
-      const packed = slice.map((cue, index) => `[${start + index}] ${cue.text}`).join("\n");
-      const res = await send("LM_TRANSLATE", { text: packed, from: "auto", to: state.settings.nativeLang });
-      if (token !== state.token || !state.settings.enabled) return;
-      const translated = res.result?.text || "";
-      const pattern = /\[(\d+)\]\s*([\s\S]*?)(?=\s*\[\d+\]|$)/g;
-      translated.replace(pattern, (_, index, line) => {
-        const target = Number(index);
-        if (target >= start && target < start + slice.length) state.native[target] = line.replace(/\s+/g, " ").trim();
-        return "";
-      });
-      renderPanel();
-      renderCurrent();
-    }
+    const remaining = Array.from({ length: Math.ceil(cues.length / size) }, (_, index) => index * size);
+    const current = () => token === state.token && state.cues === cues && state.settings.enabled && language === state.settings.nativeLang;
+    const worker = async () => {
+      while (remaining.length && current()) {
+        // Re-evaluate the playback position before every batch so a seek to a
+        // later scene never waits behind the entire beginning of the film.
+        const near = Math.floor(Math.max(0, state.activeIndex >= 0 ? state.activeIndex : state.index) / size) * size;
+        remaining.sort((a, b) => Math.abs(a - near) - Math.abs(b - near) || b - a);
+        const start = remaining.shift();
+        const slice = cues.slice(start, start + size);
+        const packed = slice.map((cue, index) => `[${start + index}] ${cue.text}`).join("\n");
+        let res;
+        try { res = await send("LM_TRANSLATE", { text: packed, from: state.trackLang || state.settings.learningLang, to: language }); } catch (_) { continue; }
+        if (!current()) return;
+        const translated = res?.ok ? res.result?.text || "" : "";
+        const pattern = /[\[［](\d+)[\]］]\s*([\s\S]*?)(?=\s*[\[［]\d+[\]］]|$)/g;
+        translated.replace(pattern, (_, index, line) => {
+          const target = Number(index);
+          if (target >= start && target < start + slice.length) {
+            state.native[target] = line.replace(/\s+/g, " ").trim();
+            renderNativeCue(target);
+          }
+          return "";
+        });
+        renderCurrent();
+        followCurrentCue();
+      }
+    };
+    job.promise = Promise.all([worker(), worker()]);
+    return job.promise;
   }
 
   function cuesFromTextTrack(track) {
@@ -839,6 +863,13 @@
       }
       return;
     }
+    // The player fetch observer and an explicit pull can deliver the same
+    // track. Keep already translated text and hovered native-word anchors.
+    if (state.fullTrack && state.trackClock === "content" && languageMatches(state.trackLang, lang || state.settings.learningLang) &&
+        parsed.cues.length === state.cues.length && parsed.cues.every((cue, index) => {
+          const previous = state.cues[index];
+          return cue.start === previous.start && cue.end === previous.end && cue.text === previous.text;
+        })) return;
     state.fullTrack = true;
     state.trackClock = "content";
     state.token += 1;
@@ -851,6 +882,10 @@
   }
 
   function placeDict(anchor) {
+    if (typeof lmPlaceDictionary === "function") {
+      lmPlaceDictionary(ui.dict, anchor, { width: window.innerWidth, height: window.innerHeight });
+      return;
+    }
     const word = anchor.getBoundingClientRect();
     const card = ui.dict.getBoundingClientRect();
     const margin = 8;
@@ -866,19 +901,31 @@
   async function showDict(wordEl, phrase = null) {
     contentTimeMs();
     if (!state.settings.enabled || state.adActive || !wordEl?.isConnected) return;
+    ui.phraseActive = Boolean(phrase);
+    clearTimeout(hoverTimer); clearTimeout(hideTimer); pendingHoverWord = null;
+    hoverWord?.classList.remove("lm-word-active");
     hoverWord = wordEl;
+    hoverWord.classList.add("lm-word-active");
     const token = ++lookupToken;
     const word = phrase?.surface || wordEl.dataset.word;
     const from = wordEl.dataset.lang || state.settings.learningLang;
     const japaneseHint = languageMatches(from, "ja") ? phrase ? { surface: word, isPhrase: !phrase.lookupForm } : japaneseForWord(wordEl) : undefined;
-    ui.dict.classList.remove("lm-hidden");
-    if (ui.dict.parentElement !== document.documentElement) document.documentElement.appendChild(ui.dict);
-    ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-empty">正在查询…</div>`;
-    placeDict(wordEl);
     const cue = state.cues[Number(wordEl.closest("[data-index]")?.dataset.index ?? state.index)];
     const context = phrase?.context || cue?.text || "";
-    const res = await send("LM_LOOKUP", { word, from, to: state.settings.nativeLang, context, staged: true, ...(japaneseHint ? { japanese: japaneseHint } : {}) });
+    const query = { word, from, to: state.settings.nativeLang, context, staged: true, ...(japaneseHint ? { japanese: japaneseHint } : {}) };
+    if (!dictionarySession && typeof lmCreateDictSession === "function") dictionarySession = lmCreateDictSession(send);
+    const cached = dictionarySession?.peek(query);
+    const oldHeight = dictOpen() ? ui.dict.getBoundingClientRect().height : 0;
+    delete ui.dict.dataset.anchorSide;
+    ui.dict.classList.remove("lm-hidden");
+    if (ui.dict.parentElement !== document.documentElement) document.documentElement.appendChild(ui.dict);
+    ui.dict.scrollTop = 0;
+    if (!cached) ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-empty" role="status">正在查询…</div>`;
+    placeDict(wordEl);
+    if (!cached) ui.dict.style.minHeight = `${Math.min(oldHeight || 140, parseFloat(ui.dict.style.maxHeight) || 560)}px`;
+    const res = cached || await (dictionarySession ? dictionarySession.lookup(query) : send("LM_LOOKUP", query));
     if (token !== lookupToken || hoverWord !== wordEl) return;
+    ui.dict.style.minHeight = "";
     if (!wordEl.isConnected) {
       hideDict();
       return;
@@ -964,6 +1011,8 @@
   function hideDict() {
     clearTimeout(hoverTimer);
     clearTimeout(hideTimer);
+    pendingHoverWord = null;
+    hoverWord?.classList.remove("lm-word-active");
     hoverWord = null;
     ui.phraseActive = false;
     lookupToken += 1;
@@ -983,12 +1032,15 @@
   }
 
   function scheduleShow(wordEl) {
-    clearTimeout(hoverTimer);
     clearTimeout(hideTimer);
-    if (hoverWord === wordEl && dictOpen()) return;
+    if (hoverWord === wordEl && dictOpen()) { clearTimeout(hoverTimer); pendingHoverWord = null; return; }
+    if (pendingHoverWord === wordEl) return;
+    clearTimeout(hoverTimer);
+    pendingHoverWord = wordEl;
     // Require a deliberate pause, and keep the current card while crossing words.
-    const delay = dictOpen() ? 480 : 300;
+    const delay = dictOpen() ? 120 : 220;
     hoverTimer = setTimeout(() => {
+      pendingHoverWord = null;
       if (!wordEl.isConnected || !wordEl.matches(":hover")) return;
       showDict(wordEl);
     }, delay);
@@ -1001,12 +1053,13 @@
       if (ui.dict?.matches(":hover") || hoverWord?.matches(":hover")) return;
       if (isPrimeWord(document.querySelector(".lm-word:hover"))) return;
       hideDict();
-    }, 180);
+    }, 260);
   }
 
   function onHover(ev) {
     if (ui.dict?.contains(ev.target)) {
       clearTimeout(hoverTimer);
+      pendingHoverWord = null;
       clearTimeout(hideTimer);
       return;
     }
@@ -1021,6 +1074,7 @@
     const next = ev.relatedTarget;
     if (word && word.contains(next)) return;
     clearTimeout(hoverTimer);
+    pendingHoverWord = null;
     if (inDictZone(next)) return;
     scheduleHide();
   }
@@ -1030,6 +1084,16 @@
     hideDict();
     if (ui.phraseButton) ui.phraseButton.hidden = true;
     ui.phraseSelection = null;
+  }
+
+  function onWordClick(ev) {
+    const word = ev.target.closest?.(".lm-word");
+    if (isPrimeWord(word) && (!window.getSelection?.() || window.getSelection().isCollapsed)) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (hoverWord !== word || !dictOpen() || ui.phraseActive) showDict(word);
+      return;
+    }
+    if (dictOpen() && !ui.dict.contains(ev.target) && !ui.phraseButton?.contains(ev.target)) hideDict();
   }
 
   async function saveWord(word, context, lookup, lang = state.trackLang || state.settings.learningLang, japaneseHint) {

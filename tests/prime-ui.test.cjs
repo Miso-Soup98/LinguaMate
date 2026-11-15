@@ -99,7 +99,7 @@ test("quick mouse passes cancel lookup; a deliberate hover performs one lookup",
   h.advance(1000);
   assert.equal(h.lookupRequests().length, 0, "sweeping past words must not query or flash cards");
   h.hover(words[2]);
-  h.advance(299);
+  h.advance(219);
   assert.equal(h.lookupRequests().length, 0);
   h.advance(1);
   await h.flush();
@@ -120,7 +120,7 @@ test("an open dictionary remains stable while crossing another word briefly", as
   const firstCard = h.prime.ui.dict.textContent;
   h.leave(words[0], words[1]);
   h.hover(words[1], words[0]);
-  h.advance(479);
+  h.advance(119);
   assert.equal(h.lookupRequests().length, 1);
   assert.equal(h.prime.ui.dict.textContent, firstCard);
   h.leave(words[1], h.prime.ui.dict);
@@ -148,7 +148,7 @@ test("late dictionary responses cannot replace a newer hovered word", async () =
   assert.doesNotMatch(h.prime.ui.dict.textContent, /obsolete-result/);
 });
 
-test("returning to the same word still rejects an earlier request for that node", async () => {
+test("returning to the same word reuses its pending request and rejects the other word's late result", async () => {
   const h = primeHarness({ deferredLookup: true });
   h.cues();
   const words = h.prime.ui.learningLine.querySelectorAll(".lm-word");
@@ -160,15 +160,66 @@ test("returning to the same word still rejects an earlier request for that node"
   h.leave(words[1], words[0]);
   h.hover(words[0], words[1]);
   h.advance(480);
-  assert.equal(h.pendingLookups.length, 3);
-  assert.equal(h.pendingLookups[0].message.word, h.pendingLookups[2].message.word);
-  h.pendingLookups[2].callback({ ok: true, result: { word: "current-response", translation: "new" } });
+  assert.equal(h.pendingLookups.length, 2);
+  h.pendingLookups[0].callback({ ok: true, result: { word: "current-response", translation: "new" } });
   await h.flush();
-  h.pendingLookups[0].callback({ ok: true, result: { word: "stale-same-node", translation: "old" } });
   h.pendingLookups[1].callback({ ok: true, result: { word: "stale-other-node", translation: "old" } });
   await h.flush();
   assert.match(h.prime.ui.dict.textContent, /current-response/);
   assert.doesNotMatch(h.prime.ui.dict.textContent, /stale-/);
+});
+
+test("continuous word selection switches after a short pause and cached returns never flash a loading card", async () => {
+  const h = primeHarness();
+  h.cues();
+  const words = h.prime.ui.learningLine.querySelectorAll(".lm-word");
+  h.hover(words[0]); h.advance(220); await h.flush();
+  assert.ok(words[0].classList.contains("lm-word-active"));
+  h.leave(words[0], words[1]); h.hover(words[1], words[0]);
+  h.advance(119);
+  assert.equal(h.lookupRequests().length, 1);
+  h.advance(1); await h.flush();
+  assert.equal(h.lookupRequests().length, 2);
+  assert.ok(words[1].classList.contains("lm-word-active"));
+  assert.equal(words[0].classList.contains("lm-word-active"), false);
+  h.leave(words[1], words[0]); h.hover(words[0], words[1]); h.advance(120);
+  assert.equal(h.lookupRequests().length, 2);
+  assert.doesNotMatch(h.prime.ui.dict.textContent, /正在查询/);
+  assert.match(h.prime.ui.dict.textContent, /translation:Sentence/);
+  h.prime.hideDict();
+  assert.equal(words[0].classList.contains("lm-word-active"), false);
+});
+
+test("moving over ruby children does not restart the hover delay or open a departed word", async () => {
+  const h = primeHarness();
+  h.cues();
+  const [word, next] = h.prime.ui.learningLine.querySelectorAll(".lm-word");
+  const ruby = h.document.createElement("ruby"), reading = h.document.createElement("rt");
+  ruby.append(reading); word.append(ruby);
+  h.hover(word); h.advance(150);
+  h.prime.onLeave({ target: word, relatedTarget: reading });
+  h.prime.onHover({ target: reading, relatedTarget: word });
+  h.advance(70); await h.flush();
+  assert.equal(h.lookupRequests().length, 1);
+  h.leave(word, next); h.hover(next, word); h.advance(60);
+  h.leave(next, word); h.hover(word, next); h.advance(300); await h.flush();
+  assert.equal(h.lookupRequests().length, 1, "returning to the current word cancels the intermediate switch");
+});
+
+test("clicking a word queries immediately and preserves playback; selecting a phrase does not query", async () => {
+  const h = primeHarness();
+  const [row] = h.cues();
+  const [word, next] = row.querySelectorAll(".lm-word");
+  h.prime.ui.phraseActive = true;
+  h.document.emit("click", { target: word });
+  await h.flush();
+  assert.equal(h.lookupRequests().length, 1);
+  assert.equal(h.video.currentTime, 0);
+  assert.equal(h.prime.ui.phraseActive, false, "an explicit word click exits the previous phrase card");
+  h.window.getSelection = () => ({ isCollapsed: false });
+  h.document.emit("click", { target: next });
+  await h.flush();
+  assert.equal(h.lookupRequests().length, 1);
 });
 
 test("a pending hover is cancelled when its caption word disappears", () => {

@@ -1,6 +1,43 @@
 // One dictionary body for YouTube and Prime. All asynchronous work belongs to
 // the rendered body, never to a global "current word".
 var lmWordCard = (() => {
+  const translations = new Map();
+  const requests = new Map();
+  let translationGeneration = 0;
+  const translationKey = (from, to, text) => JSON.stringify([from, to, String(text || "").trim()]);
+  function remembered(from, to, text) {
+    const key = translationKey(from, to, text), hit = translations.get(key);
+    if (!hit) return "";
+    if (Date.now() - hit.at > 10 * 60 * 1000) { translations.delete(key); return ""; }
+    return hit.text;
+  }
+  function remember(from, to, text, translated) {
+    if (!translated) return;
+    const key = translationKey(from, to, text);
+    translations.delete(key);
+    translations.set(key, { text: translated, at: Date.now() });
+    if (translations.size > 600) translations.delete(translations.keys().next().value);
+  }
+  function invalidateContext(from, to, text) {
+    translations.delete(translationKey(from, to, text));
+    translationGeneration += 1;
+  }
+  async function request(send, type, message) {
+    const generation = translationGeneration;
+    const key = JSON.stringify([generation, type, message]);
+    if (type === "LM_TRANSLATE") {
+      const cached = remembered(message.from, message.to, message.text);
+      if (cached && !message.refresh) return { ok: true, result: { text: cached } };
+    }
+    if (requests.has(key)) return requests.get(key);
+    const pending = Promise.resolve().then(() => send(type, message)).then((response) => {
+      if (generation === translationGeneration && response?.ok && type === "LM_TRANSLATE") remember(message.from, message.to, message.text, response.result?.text);
+      if (generation === translationGeneration && response?.ok && type === "LM_GLOSS_TRANSLATE") message.lines.forEach((line, index) => remember("en", message.to, line, response.glosses?.[index]));
+      return response;
+    }).finally(() => { if (requests.get(key) === pending) requests.delete(key); });
+    requests.set(key, pending);
+    return pending;
+  }
   const escape = (value) => String(value || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const posNames = { noun: "名词", verb: "动词", adjective: "形容词", adverb: "副词", pronoun: "代词", preposition: "介词", conjunction: "连词", interjection: "感叹词", determiner: "限定词", "phrasal verb": "短语动词", idiom: "习语" };
   const flatten = (data) => (data.entries || []).flatMap((entry) => (entry.items || []).map((item) => ({ ...item, pos: entry.pos, posLabel: entry.posLabel, headword: entry.headword, reading: entry.reading, contextEligible: entry.contextEligible })));
@@ -64,6 +101,10 @@ var lmWordCard = (() => {
     if (!root) return;
     const alive = () => root.isConnected && container.contains(root) && isCurrent();
     const items = flatten(data);
+    items.forEach((item) => {
+      item.gloss = remembered("en", to, item.definition) || item.gloss || "";
+      if (item.gloss) remember("en", to, item.definition, item.gloss);
+    });
     let visible = 6, glossBusy = false, contextBusy = false, choiceBusy = false;
     const attempted = new Set();
     const sameLanguage = /^en(?:-|$)/i.test(to);
@@ -80,11 +121,11 @@ var lmWordCard = (() => {
       const matches = contextMatches(items, english, `${data.word} ${data.dictionaryHeadword || ""} ${(data.englishForms || []).map((form) => form.lemma).join(" ")}`);
       if (!matches.length || !alive()) return;
       const choices = matches.map((match) => ({ ...match, definition: match.excerpt,
-        gloss: match.excerpt === items[match.index].definition ? items[match.index].gloss : "" }));
+        gloss: remembered("en", to, match.excerpt) || (match.excerpt === items[match.index].definition ? items[match.index].gloss : "") }));
       const pending = choices.filter((item) => !item.gloss && !sameLanguage);
       if (pending.length) {
         let response;
-        try { response = await send("LM_GLOSS_TRANSLATE", { lines: pending.map((item) => item.definition), to }); } catch (_) {}
+        try { response = await request(send, "LM_GLOSS_TRANSLATE", { lines: pending.map((item) => item.definition), to }); } catch (_) {}
         if (!alive()) return;
         pending.forEach((item, i) => { if (response?.ok && response.glosses?.[i]) item.gloss = response.glosses[i]; });
       }
@@ -120,7 +161,7 @@ var lmWordCard = (() => {
         const batch = pending.slice(offset, offset + 6);
         batch.forEach((item) => attempted.add(item));
         let response;
-        try { response = await send("LM_GLOSS_TRANSLATE", { lines: batch.map((item) => item.definition), to }); } catch (_) {}
+        try { response = await request(send, "LM_GLOSS_TRANSLATE", { lines: batch.map((item) => item.definition), to }); } catch (_) {}
         if (!alive()) { glossBusy = false; return; }
         batch.forEach((item, index) => { if (response?.ok && response.glosses?.[index]) item.gloss = response.glosses[index]; });
         if (items[0]?.gloss) {
@@ -151,12 +192,12 @@ var lmWordCard = (() => {
     async function translateContext() {
       if (!contextOutput || contextBusy || !alive()) return;
       contextBusy = true; contextRetry.hidden = true;
-      contextOutput.textContent = "正在翻译原句…";
+      contextOutput.textContent = remembered(from, to, context) || "正在翻译原句…";
       const englishContext = /^en(?:-|$)/i.test(from) ? Promise.resolve(context)
         : /^en(?:-|$)/i.test(to) ? null
-        : send("LM_TRANSLATE", { text: context, from, to: "en" }).then((response) => response?.ok ? response.result?.text || "" : "").catch(() => "");
+        : request(send, "LM_TRANSLATE", { text: context, from, to: "en" }).then((response) => response?.ok ? response.result?.text || "" : "").catch(() => "");
       let response;
-      try { response = await send("LM_TRANSLATE", { text: context, from, to }); } catch (_) {}
+      try { response = await request(send, "LM_TRANSLATE", { text: context, from, to }); } catch (_) {}
       if (!alive()) return;
       contextBusy = false;
       const translated = response?.ok && response.result?.text;
@@ -191,7 +232,7 @@ var lmWordCard = (() => {
       const output = button.parentElement.querySelector(".lm-example-translation");
       button.disabled = true; output.textContent = "正在翻译例句…";
       let response;
-      try { response = await send("LM_TRANSLATE", { text: item.example, from: "en", to }); } catch (_) {}
+      try { response = await request(send, "LM_TRANSLATE", { text: item.example, from: "en", to }); } catch (_) {}
       if (!alive()) return;
       item.exampleTranslation = response?.ok ? response.result?.text || "" : "";
       // Expanding more meanings can recreate this article while its example
@@ -209,8 +250,13 @@ var lmWordCard = (() => {
       const query = event.currentTarget.querySelector("input").value.trim();
       if (query && query.length <= 200 && alive()) onQuery?.(query);
     });
+    if (items[0]?.gloss) {
+      data.translation = items[0].gloss;
+      const summary = container.querySelector(".lm-dict-trans");
+      if (summary) summary.textContent = data.translation;
+    }
     render(); translateVisible(); translateContext();
     return { get items() { return items; } };
   }
-  return { html, bind, flatten, highlight, contextMatches };
+  return { html, bind, flatten, highlight, contextMatches, invalidateContext };
 })();

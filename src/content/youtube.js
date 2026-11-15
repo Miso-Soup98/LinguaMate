@@ -26,8 +26,13 @@
   };
   let hoverWord = null;
   let hoverTimer = 0;
+  let pendingHoverWord = null;
+  let dictionarySession;
   let hideTimer = 0;
   let captionRetry = 0;
+  let captionLoad = null;
+  let captionRetryRequested = false;
+  let hasBooted = false;
   const captionCache = new Map();
   let learnGeneration = 0;
   let translationQueue = [];
@@ -332,6 +337,10 @@
 
   function retryCaptions() {
     if (state.cues.length) return;
+    if (captionLoad?.gen === state.loadGen) {
+      captionRetryRequested = true;
+      return;
+    }
     clearTimeout(captionRetry);
     captionRetry = setTimeout(() => loadCaptions(true), 350);
   }
@@ -635,51 +644,98 @@
     renderCurrent();
   }
 
-  async function loadCaptions(force) {
-    if (!state.settings.enabled) return;
+  function loadCaptions(force = false) {
     const videoId = currentVideoId();
-    if (!videoId) return;
-    if (state.videoId !== videoId) {
+    if (!state.settings.enabled || !videoId) {
+      state.loadGen += 1;
+      captionLoad = null;
+      captionRetryRequested = false;
+      clearTimeout(captionRetry);
+      return Promise.resolve();
+    }
+    const key = cacheKey(videoId);
+    // YouTube emits several ready/navigation/CC signals for one load. Sharing
+    // that work avoids cancel/restart loops while the player obtains a track.
+    if (captionLoad?.key === key && captionLoad.gen === state.loadGen) return captionLoad.promise;
+    if (!force && state.captionKey === key && state.cues.length && !state.nativeTrackLoading) return Promise.resolve();
+    clearTimeout(captionRetry);
+    captionRetryRequested = false;
+    const job = { key, gen: 0, promise: null };
+    job.promise = performCaptionLoad(force, videoId, key).finally(() => {
+      if (captionLoad !== job) return;
+      captionLoad = null;
+      if (captionRetryRequested && job.gen === state.loadGen && !state.cues.length) {
+        captionRetryRequested = false;
+        retryCaptions();
+      }
+    });
+    job.gen = state.loadGen;
+    captionLoad = job;
+    return job.promise;
+  }
+
+  function cacheCurrentCaptions(key, nativeComplete) {
+    captionCache.delete(key);
+    captionCache.set(key, {
+      cues: state.cues, nativeCues: state.nativeCues, tracks: state.tracks,
+      learningTrack: state.learningTrack, directTranslation: state.directTranslation, nativeComplete
+    });
+    if (captionCache.size > 6) captionCache.delete(captionCache.keys().next().value);
+  }
+
+  async function performCaptionLoad(force, videoId, key) {
+    if (state.captionKey !== key) {
       invalidateJapaneseLines(ui.panel);
       invalidateJapaneseLines(ui.root);
       hideDict();
     }
-    const key = cacheKey(videoId);
-    if (!force && videoId === state.videoId && state.cues.length) return;
     const gen = ++state.loadGen;
+    const isCurrent = () => gen === state.loadGen && currentVideoId() === videoId && cacheKey(videoId) === key && state.settings.enabled;
     for (const job of translationQueue) translationJobs.delete(job.key);
     translationQueue = [];
-    translationObserver?.disconnect();
+    state.cues.forEach((cue) => { cue.translationPending = false; });
     const cached = captionCache.get(key);
-    if (cached && !force) {
+    if (cached && state.captionKey !== key) {
       state.videoId = videoId;
+      state.captionKey = key;
       state.title = document.title.replace(/ - YouTube$/, "");
       state.cues = cached.cues;
+      state.cues.forEach((cue) => { cue.translationPending = false; });
       state.nativeCues = cached.nativeCues;
       state.tracks = cached.tracks || [];
       state.learningTrack = cached.learningTrack;
       state.directTranslation = cached.directTranslation;
       state.nativeTrackLoading = false;
       showReady();
-      return;
+      if (!force && cached.nativeComplete) return;
     }
     state.videoId = videoId;
     state.title = document.title.replace(/ - YouTube$/, "");
-    if (!cached) {
+    const preserve = state.captionKey === key && state.cues.length > 0;
+    if (!preserve) {
+      translationObserver?.disconnect();
+      state.captionKey = "";
       state.cues = [];
       state.nativeCues = [];
       state.index = -1;
+      state.activeIndex = -1;
+      state.nativeTrackLoading = false;
       state.status = "loading";
       state.statusText = "";
       renderPanel();
+      renderCurrent();
     }
+    const fail = (status, message) => {
+      state.nativeTrackLoading = false;
+      state.status = preserve ? "ready" : status;
+      state.statusText = message;
+      if (!preserve) { renderPanel(); renderCurrent(); }
+    };
 
     const ping = await requestPage("LM_PING", {}, 700);
-    if (gen !== state.loadGen) return;
+    if (!isCurrent()) return;
     if (!ping) {
-      state.status = "error";
-      state.statusText = "字幕组件还没挂上。请在扩展管理页重新加载语伴，然后刷新这个 YouTube 页面。";
-      renderPanel();
+      fail("error", "字幕组件还没挂上。请在扩展管理页重新加载语伴，然后刷新这个 YouTube 页面。");
       return;
     }
 
@@ -687,7 +743,7 @@
     let nudged = false;
     for (let i = 0; i < 30; i += 1) {
       info = await requestPage("LM_GET_TRACKS", {}, 700);
-      if (gen !== state.loadGen) return;
+      if (!isCurrent()) return;
       if (info && info.videoId === videoId && info.tracks && info.tracks.length) break;
       if (i === 4 && !nudged) {
         nudged = true;
@@ -696,33 +752,41 @@
       await sleep(80);
     }
 
-    const tracks = (info && info.tracks) || [];
-    state.tracks = tracks;
+    if (!isCurrent()) return;
+    const tracks = info?.videoId === videoId ? info.tracks || [] : [];
     if (!tracks.length) {
-      state.status = "empty";
-      state.statusText = "这个视频没有字幕轨道。请换一个带 CC 字幕的视频。";
-      renderPanel();
-      renderCurrent();
+      fail("empty", info?.videoId && info.videoId !== videoId
+        ? "播放器仍在切换视频，暂时没有读到当前视频的字幕。请稍后重试。"
+        : "这个视频没有字幕轨道。请换一个带 CC 字幕的视频。");
       return;
     }
 
     const learning = pickTrack(tracks, state.settings.learningLang, true) || tracks[0];
     const nativeExact = pickTrack(tracks, state.settings.nativeLang, false);
+    const learningCues = await fetchTrack(learning, videoId);
+    if (!isCurrent()) return;
+    if (!learningCues.length) {
+      fail("error", "已经找到字幕轨道，但还没有字幕正文。打开或关闭一次播放器的 CC，语伴会自动再读一次。");
+      return;
+    }
+    const unchanged = preserve && state.cues.length === learningCues.length && learningCues.every((cue, index) => {
+      const previous = state.cues[index];
+      return previous.start === cue.start && previous.end === cue.end && (previous.originalText ?? previous.text) === cue.text;
+    });
+    state.tracks = tracks;
     state.learningTrack = learning;
     state.directTranslation = /^ja(?:-|$)/i.test(learning.languageCode);
     state.nativeTrackLoading = true;
-    state.nativeCues = [];
-    const learningCues = await fetchTrack(learning, videoId);
-    if (gen !== state.loadGen) return;
-    state.cues = learningCues;
-    if (!state.cues.length) {
-      state.status = "error";
-      state.statusText = "已经找到字幕轨道，但还没有字幕正文。打开或关闭一次播放器的 CC，语伴会自动再读一次。";
-      renderPanel();
-      renderCurrent();
-      return;
+    state.captionKey = key;
+    if (!unchanged) {
+      state.cues = learningCues;
+      state.nativeCues = [];
+      showReady();
+    } else {
+      state.status = "ready";
+      state.statusText = "";
     }
-    showReady();
+    cacheCurrentCaptions(key, false);
 
     // One timed track provides translations for the whole video. Keep direct
     // translation for missing rows and explicit retries, rather than making
@@ -730,23 +794,39 @@
     const translated = nativeExact && nativeExact.baseUrl !== learning.baseUrl
       ? await fetchTrack(nativeExact, videoId)
       : await fetchTrack(learning, videoId, lmYtCode(state.settings.nativeLang));
-    if (gen !== state.loadGen) return;
+    if (!isCurrent()) return;
     state.nativeTrackLoading = false;
     installNativeTranslations(translated);
-    captionCache.set(key, {
-      cues: state.cues,
-      nativeCues: state.nativeCues,
-      tracks, learningTrack: learning, directTranslation: state.directTranslation
-    });
-    if (state.tab === "subs") renderTranscript();
-    renderCurrent();
+    cacheCurrentCaptions(key, true);
+    // Translation completion must not detach source words, an open dictionary
+    // or an inline correction editor. Only native text/status lines change.
+    state.cues.forEach((_cue, index) => { if (!state.nativeCues[index]?.text) updateTranslationLine(index); });
+    observeVisibleTranslations();
+    if (state.activeIndex >= 0) {
+      for (let index = state.activeIndex; index < Math.min(state.cues.length, state.activeIndex + 4); index += 1) queueTranslation(index);
+    }
   }
 
   function alignCues(source, target) {
     if (!target.length) return [];
+    const sorted = [...target].sort((a, b) => a.start - b.start);
+    const ends = [];
+    let lastEnd = -Infinity;
+    for (const row of sorted) { lastEnd = Math.max(lastEnd, row.end); ends.push(lastEnd); }
     return source.map((cue) => {
-      const rows = target.filter((row) => row.start < cue.end && row.end > cue.start)
-        .sort((a, b) => a.start - b.start);
+      // Skip every interval known to have ended. Prefix maximums preserve
+      // overlapping/long translation cues while avoiding a full-track scan
+      // and sort for each source line in long videos.
+      let low = 0, high = ends.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (ends[middle] <= cue.start) low = middle + 1;
+        else high = middle;
+      }
+      const rows = [];
+      for (let index = low; index < sorted.length && sorted[index].start < cue.end; index += 1) {
+        if (sorted[index].end > cue.start) rows.push(sorted[index]);
+      }
       // Keep every overlapping translation. Do not invent a match across a
       // silent gap or assign the first subtitle in the video to missing rows.
       const texts = rows.map((row) => row.text).filter((text, index, all) => index === 0 || text !== all[index - 1]);
@@ -776,6 +856,7 @@
     const cue = state.cues[index];
     if (!cue || !state.settings.enabled || (!force && (!state.settings.showNative || !state.directTranslation))) return;
     if (force) {
+      if (typeof lmWordCard !== "undefined") lmWordCard.invalidateContext(state.learningTrack?.languageCode || state.settings.learningLang, state.settings.nativeLang, cue.text);
       // A direct request to translate must reveal its result even while the
       // user's global subtitle-translation preference is off.
       cue.translationRevealed = true;
@@ -991,7 +1072,9 @@
       renderWords(learning, cue.text, state.settings.learningLang);
       row.append(time, learning);
       const native = state.nativeCues[i]?.text || "";
-      if (native || japanese) {
+      // Keep a stable target for the translated track arriving after source.
+      // Adding translations never needs to rebuild the source word anchors.
+      {
         const nativeLine = document.createElement("div");
         nativeLine.className = "lm-cue-native";
         renderWords(nativeLine, native || (cue.translationPending ? "整句翻译中…" : cue.translationError ? "翻译失败，请点击重译" : state.nativeTrackLoading ? "正在读取译文…" : ""), state.settings.nativeLang, !!native && state.settings.nativeInteractive);
@@ -1033,6 +1116,12 @@
     ui.panelBody.replaceChildren(fragment);
     if (hoverWord && !hoverWord.isConnected) hideDict();
     ui.panelBody.scrollTop = scroll;
+    observeVisibleTranslations();
+  }
+
+  function observeVisibleTranslations() {
+    translationObserver?.disconnect();
+    if (state.tab !== "subs" || !ui.panelBody || state.nativeTrackLoading) return;
     if (state.directTranslation && state.settings.showNative) {
       translationObserver = new IntersectionObserver((entries) => {
         for (const entry of entries) if (entry.isIntersecting) {
@@ -1409,6 +1498,11 @@
     if (ui.dict.parentElement !== document.documentElement) {
       document.documentElement.appendChild(ui.dict);
     }
+    if (typeof lmPlaceDictionary === "function") {
+      lmPlaceDictionary(ui.dict, anchor, { width: document.documentElement.clientWidth, height: window.innerHeight });
+      placeBridge(anchor);
+      return;
+    }
     const margin = 8;
     const gap = 6;
     const word = anchor.getBoundingClientRect();
@@ -1469,6 +1563,8 @@
   function hideDict() {
     clearTimeout(hoverTimer);
     clearTimeout(hideTimer);
+    pendingHoverWord = null;
+    hoverWord?.classList.remove("lm-word-active");
     hoverWord = null;
     state.dictToken += 1;
     stopSpeech();
@@ -1483,18 +1579,24 @@
       const hovered = document.querySelector(".lm-word:hover");
       if (hovered && (ui.subs?.contains(hovered) || ui.panel?.contains(hovered))) return;
       hideDict();
-    }, 180);
+    }, 260);
   }
 
   function scheduleShow(wordEl) {
     if (!wordEl) return;
     if (hoverWord === wordEl && dictOpen()) {
+      clearTimeout(hoverTimer);
+      pendingHoverWord = null;
       clearTimeout(hideTimer);
       return;
     }
+    if (pendingHoverWord === wordEl) return;
     clearTimeout(hoverTimer);
-    const delay = dictOpen() ? 480 : 40;
+    clearTimeout(hideTimer);
+    pendingHoverWord = wordEl;
+    const delay = dictOpen() ? 120 : 220;
     hoverTimer = setTimeout(() => {
+      pendingHoverWord = null;
       if (!wordEl.isConnected || !wordEl.matches(":hover")) return;
       clearTimeout(hideTimer);
       showDict(wordEl);
@@ -1503,26 +1605,32 @@
 
   async function showDict(wordEl, selected = null) {
     if (!wordEl || !wordEl.isConnected) return;
+    clearTimeout(hoverTimer); clearTimeout(hideTimer); pendingHoverWord = null;
+    hoverWord?.classList.remove("lm-word-active");
     hoverWord = wordEl;
+    hoverWord.classList.add("lm-word-active");
     rememberCue(wordEl);
     const word = selected?.surface || wordEl.dataset.word;
     const from = selected?.lang || wordEl.dataset.lang || state.settings.learningLang;
     const cue = selected?.context ? { ...(cueForWord(wordEl) || {}), text: selected.context } : cueForWord(wordEl);
     const analysis = from === "ja" && !selected?.isPhrase ? selected || analysisForWord(wordEl) : null;
     const token = ++state.dictToken;
+    const query = {
+      word, from, staged: true, to: state.settings.nativeLang, context: cue?.text || "",
+      ...(analysis ? { japanese: analysis } : {}), ...(selected?.isPhrase ? { isPhrase: true } : {})
+    };
+    if (!dictionarySession && typeof lmCreateDictSession === "function") dictionarySession = lmCreateDictSession(send);
+    const cached = dictionarySession?.peek(query);
+    const oldHeight = dictOpen() ? ui.dict.getBoundingClientRect().height : 0;
+    delete ui.dict.dataset.anchorSide;
     ui.dict.classList.remove("lm-hidden");
-    ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-empty">正在查询…</div>`;
+    ui.dict.scrollTop = 0;
+    if (!cached) ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-empty" role="status">正在查询…</div>`;
     placeDict(wordEl);
-    const res = await send("LM_LOOKUP", {
-      word,
-      from,
-      staged: true,
-      to: state.settings.nativeLang,
-      context: cue?.text || "",
-      ...(analysis ? { japanese: analysis } : {}),
-      ...(selected?.isPhrase ? { isPhrase: true } : {})
-    });
+    if (!cached) ui.dict.style.minHeight = `${Math.min(oldHeight || 140, parseFloat(ui.dict.style.maxHeight) || 560)}px`;
+    const res = cached || await (dictionarySession ? dictionarySession.lookup(query) : send("LM_LOOKUP", query));
     if (token !== state.dictToken || hoverWord !== wordEl) return;
+    ui.dict.style.minHeight = "";
     if (!wordEl.isConnected) { hideDict(); return; }
     if (!res.ok) {
       ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-vocab-status" role="alert" data-error="true">${escapeHtml(res.error || "查询失败，请重试")}</div><button type="button" class="lm-chip" data-retry>重新查询</button>`;
@@ -1539,7 +1647,7 @@
     if (window.getSelection?.() && !window.getSelection().isCollapsed) return;
     if (inDictZone(ev.target) && ev.target !== hoverWord && !(hoverWord && hoverWord.contains(ev.target))) {
       clearTimeout(hideTimer);
-      if (ui.dict && ui.dict.contains(ev.target)) return;
+      if (ui.dict && ui.dict.contains(ev.target)) { clearTimeout(hoverTimer); pendingHoverWord = null; return; }
       if (ui.bridge && ui.bridge.contains(ev.target)) return;
     }
     const word = ev.target.closest && ev.target.closest(".lm-word");
@@ -1555,6 +1663,8 @@
     const leftCard = ui.dict && ui.dict.contains(target);
     const leftBridge = ui.bridge && (target === ui.bridge || ui.bridge.contains(target));
     if (!leftWord && !leftCard && !leftBridge) return;
+    if (leftWord?.contains(next)) return;
+    clearTimeout(hoverTimer); pendingHoverWord = null;
     if (inDictZone(next)) return;
     scheduleHide();
   }
@@ -1669,6 +1779,12 @@
   }
 
   function onDocClick(ev) {
+    const word = ev.target.closest?.(".lm-word");
+    if (state.settings.enabled && word && (ui.subs?.contains(word) || ui.panel?.contains(word)) && (!window.getSelection?.() || window.getSelection().isCollapsed)) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (hoverWord !== word || !dictOpen()) showDict(word);
+      return;
+    }
     if (!ui.dict || ui.dict.classList.contains("lm-hidden")) return;
     if (ui.dict.contains(ev.target) || (ev.target.closest && ev.target.closest(".lm-word"))) return;
     hideDict();
@@ -1742,8 +1858,9 @@
 
   async function boot() {
     await refreshStore();
+    hasBooted = true;
     mountUi();
-    loadCaptions(true);
+    loadCaptions();
   }
 
   window.addEventListener("message", (event) => {
@@ -1751,10 +1868,12 @@
     const msg = event.data;
     if (!msg || msg.source !== "linguamate-page" || msg.requestId) return;
     if (msg.type === "LM_READY" || msg.type === "LM_NAVIGATE") {
+      if (!hasBooted) return;
+      if (msg.type === "LM_READY" && captionLoad?.gen === state.loadGen && !state.cues.length) captionRetryRequested = true;
       mountUi();
-      loadCaptions(true);
+      loadCaptions();
     }
-    if (msg.type === "LM_CAPTIONS") retryCaptions();
+    if (msg.type === "LM_CAPTIONS" && (!msg.videoId || msg.videoId === currentVideoId())) retryCaptions();
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -1767,7 +1886,7 @@
     });
   });
 
-  document.addEventListener("yt-navigate-finish", () => mountUi());
+  document.addEventListener("yt-navigate-finish", () => { mountUi(); if (hasBooted) loadCaptions(); });
   document.addEventListener("yt-page-data-updated", () => mountUi());
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("keyup", onKeyUp, true);
