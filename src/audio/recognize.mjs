@@ -96,11 +96,13 @@ self.onmessage = async ({ data: { samples } }) => {
     const reported = new Map();
     whisper ||= await pipeline("automatic-speech-recognition", "Xenova/whisper-base", {
       progress_callback: event => {
-        if (event.status === "progress" && Number.isFinite(event.progress)) {
-          const percent = Math.floor(event.progress / 5) * 5;
-          if (reported.get(event.file) !== percent) status("正在下载听写模型 " + event.file + " " + percent + "%");
-          reported.set(event.file, percent);
-        }
+        if (event.status !== "progress") return;
+        const progress = Number.isFinite(event.progress)
+          ? Math.floor(event.progress / 5) * 5 + "%"
+          : "已接收 " + (event.loaded / 1048576).toFixed(1) + " MiB";
+        if (reported.get(event.file) === progress) return;
+        reported.set(event.file, progress);
+        status("正在读取听写模型 " + event.file + " " + progress);
       },
       revision: "64da57285918e20ea79ea5c88eed7197933abaa8", device: "wasm", dtype: "q8"
     });

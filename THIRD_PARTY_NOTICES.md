@@ -43,7 +43,7 @@ Review the generated `SOURCE.json` and dictionary tests, then update the script'
 
 ## Local Japanese speech recognition
 
-The YouTube audio worker bundles the browser distributions of [Transformers.js 3.8.1](https://www.npmjs.com/package/@huggingface/transformers/v/3.8.1) and [ONNX Runtime Web 1.22.0-dev.20250409-89f8206ba4](https://www.npmjs.com/package/onnxruntime-web/v/1.22.0-dev.20250409-89f8206ba4). The two ONNX imports in the Transformers bundle resolve to the packaged WASM-only entry point. The extension ships the WASM loader and binary alongside it.
+The YouTube audio worker bundles the browser distributions of [Transformers.js 3.8.1](https://www.npmjs.com/package/@huggingface/transformers/v/3.8.1) and [ONNX Runtime Web 1.22.0-dev.20250409-89f8206ba4](https://www.npmjs.com/package/onnxruntime-web/v/1.22.0-dev.20250409-89f8206ba4). The two ONNX imports in the Transformers bundle resolve to the packaged WASM-only entry point. The extension ships the WASM loader and binary alongside it. The Transformers response reader delegates to LinguaMate’s streaming reader to report downloaded bytes when the response length is unavailable.
 
 - [Transformers.js licence](src/vendor/audio-asr/LICENSE-transformers.txt) and the [licence of the bundled Hugging Face Jinja implementation](src/vendor/audio-asr/LICENSE-jinja.txt)
 - [ONNX Runtime licence](src/vendor/audio-asr/LICENSE-onnxruntime.txt) and [third-party notices](src/vendor/audio-asr/ThirdPartyNotices-onnxruntime.txt)

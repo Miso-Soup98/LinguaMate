@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
-  "version": "1.14.1",
+  "version": "1.14.2",
   "default_locale": "zh_CN",
   "action": {
     "default_title": "__MSG_extName__",
@@ -34,6 +34,10 @@
     "https://api.dictionaryapi.dev/*",
     "https://upload.wikimedia.org/*"
   ],
+  "web_accessible_resources": [{
+    "resources": ["src/audio/capture-worklet.js"],
+    "matches": ["https://www.youtube.com/*", "https://youtube.com/*", "https://m.youtube.com/*"]
+  }],
   "content_scripts": [
     {
       "matches": [

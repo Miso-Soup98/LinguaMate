@@ -7,9 +7,13 @@ const lmYoutubeAudio = (() => {
     const { stream, ctx, processor, events } = session;
     session = null;
     events.abort();
-    processor.onaudioprocess = null;
+    if (processor) {
+      processor.port.onmessage = null;
+      processor.port.close();
+      processor.disconnect();
+    }
     stream.getTracks().forEach(track => track.stop());
-    ctx.close().catch(() => {});
+    ctx?.close().catch(() => {});
   }
   async function start(video, valid, notifyEnd) {
     stop();
@@ -20,18 +24,13 @@ const lmYoutubeAudio = (() => {
       stream.getTracks().forEach(t => t.stop());
       throw new Error("请先播放视频，再开启原声校对");
     }
-    let ctx, processor;
-    try {
-      ctx = new AudioContext({ sampleRate: rate });
-      processor = ctx.createScriptProcessor(1024, 1, 1);
-    } catch (error) {
-      stream.getTracks().forEach(track => track.stop());
-      ctx?.close().catch(() => {});
-      throw error;
-    }
     const events = new AbortController();
-    const state = session = { stream, ctx, processor, events, video, blocks: [] };
-    const reset = () => { state.blocks.length = 0; };
+    const state = session = { stream, events, video, blocks: [], ctx: null, processor: null };
+    let validFrom = 0;
+    const reset = () => {
+      state.blocks.length = 0;
+      validFrom = state.ctx?.currentTime || 0;
+    };
     for (const event of ["seeking","ratechange","emptied","waiting"]) video.addEventListener(event, reset, { signal: events.signal });
     const end = () => { if (session === state) { stop(); notifyEnd(); } };
     // Finishing the video may end its captured track. Keep the last sentence
@@ -44,24 +43,39 @@ const lmYoutubeAudio = (() => {
     }, { signal: events.signal });
     window.addEventListener("pagehide", end, { signal: events.signal });
     try {
+      const ctx = state.ctx = new AudioContext({ sampleRate: rate });
+      await ctx.audioWorklet.addModule(chrome.runtime.getURL("src/audio/capture-worklet.js"), { credentials: "omit" });
+      if (session !== state) return;
+      if (!valid()) { end(); return; }
+      const processor = state.processor = new AudioWorkletNode(ctx, "linguamate-capture", {
+        channelCount: 1, channelCountMode: "explicit", outputChannelCount: [1]
+      });
       const source = ctx.createMediaStreamSource(new MediaStream(tracks));
-      const mute = ctx.createGain(); mute.gain.value = 0;
-      source.connect(processor); processor.connect(mute); mute.connect(ctx.destination);
-      processor.onaudioprocess = event => {
+      source.connect(processor);
+      processor.connect(ctx.destination);
+      processor.onprocessorerror = end;
+      processor.port.onmessage = ({ data: { samples: data, endTime } }) => {
+        if (session !== state) return;
         if (!valid()) { end(); return; }
         if (video.closest(".ad-showing, .ad-interrupting")) { reset(); return; }
         if (video.paused || video.seeking || video.readyState < 3) return;
-        const data = event.inputBuffer.getChannelData(0);
-        const observed = video.currentTime;
-        const duration = data.length / rate * video.playbackRate;
+        const seconds = data.length / rate;
+        if (endTime - seconds < validFrom - 1 / rate) return;
+        const lag = Math.max(0, ctx.currentTime - endTime);
+        const observed = video.currentTime - lag * video.playbackRate;
+        const duration = seconds * video.playbackRate;
         let previous = state.blocks.at(-1);
         if (previous && Math.abs(previous.end + duration - observed) > .18) { reset(); previous = null; }
         const start = previous?.end ?? observed - duration;
-        state.blocks.push({ start, end: start + duration, data: data.slice() });
+        state.blocks.push({ start, end: start + duration, data });
         while (state.blocks.length > 470 || state.blocks[0].end < observed - 30) state.blocks.shift();
       };
       await ctx.resume();
-    } catch (error) { if (session === state) stop(); throw error; }
+    } catch (error) {
+      if (session !== state) return;
+      stop();
+      throw error;
+    }
   }
   function slice(start, end) {
     const recorded = session?.blocks;
