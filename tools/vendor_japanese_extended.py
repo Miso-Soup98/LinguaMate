@@ -46,7 +46,7 @@ def main():
         member, = [entry for entry in tar.getmembers() if entry.name.endswith(".json")]
         full = json.load(tar.extractfile(member))
     shards = [{} for _ in range(BUCKETS)]
-    nouns = {}
+    readings_by_form = {}
     for row in full["words"]:
         entry = {"id": row["id"], "k": [x["text"] for x in row["kanji"]],
                  "r": [{"t": x["text"], "a": x["appliesToKanji"]} for x in row["kana"]],
@@ -56,14 +56,16 @@ def main():
         for index in {bucket(key(x)) for x in entry["k"] + [r["t"] for r in entry["r"]]}:
             shards[index][entry["id"]] = entry
         for form in entry["k"]:
-            # Exact written noun compounds only; no fuzzy spelling replacement.
-            if not (2 <= len(form) <= 16 and all("一" <= c <= "鿿" or c in "々ヶヵ" for c in form)):
+            han = sum("一" <= c <= "鿿" or c in "々ヶヵ" for c in form)
+            noun_compound = 2 <= len(form) <= 16 and han == len(form)
+            expression = han >= 2 and han < len(form) <= 24 and any("ぁ" <= c <= "ゖ" for c in form)
+            if not noun_compound and not expression:
                 continue
             readings = [r["t"] for r in entry["r"] if ("*" in r["a"] or form in r["a"]) and any(
-                "n" in sense["p"] and ("*" in sense["k"] or form in sense["k"]) and
+                (expression or "n" in sense["p"]) and ("*" in sense["k"] or form in sense["k"]) and
                 ("*" in sense["r"] or r["t"] in sense["r"]) for sense in entry["s"])]
             if readings:
-                nouns.setdefault(form, set()).update(readings)
+                readings_by_form.setdefault(form, set()).update(readings)
     directory = ROOT / "src/vendor/jmdict/extended"
     directory.mkdir(exist_ok=True)
     hashes = {}
@@ -73,14 +75,14 @@ def main():
         hashes[name] = hashlib.sha256(content).hexdigest()
     for i, entries in enumerate(shards):
         save(f"{i:02d}.json.gz", {"date": full["dictDate"], "tags": full["tags"], "words": list(entries.values())})
-    save("compounds.json.gz", {form: sorted(readings) for form, readings in sorted(nouns.items())})
+    save("compounds.json.gz", {form: sorted(readings) for form, readings in sorted(readings_by_form.items())})
     metadata = {"source": "JMdict / EDRDG", "distribution": "scriptin/jmdict-simplified",
                 "url": URL, "archiveSha256": digest, "dataDate": full["dictDate"],
                 "entries": len(full["words"]), "license": "CC-BY-SA-4.0", "buckets": BUCKETS,
-                "modification": "Full English entries; hashed lookup shards; exact written noun index; retains reading and sense restrictions",
+                "modification": "Full English entries; hashed lookup shards; exact written noun and mixed-script expression reading index; retains reading and sense restrictions",
                 "outputSha256": hashes}
     (directory / "SOURCE.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"entries": len(full["words"]), "compounds": len(nouns), "sha256": digest,
+    print(json.dumps({"entries": len(full["words"]), "indexedForms": len(readings_by_form), "sha256": digest,
                       "bytes": sum(p.stat().st_size for p in directory.glob("*.gz"))}))
 
 

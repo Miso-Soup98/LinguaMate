@@ -33,6 +33,7 @@
     return {
       surface: clean(token.surface_form), lemma: clean(token.basic_form) || clean(token.surface_form),
       reading: kana(token.reading), baseReading: baseReading(token),
+      ...(token.otherReadings?.length ? { otherReadings: token.otherReadings } : {}),
       pos: clean(token.pos), posDetail: [token.pos_detail_1, token.pos_detail_2, token.pos_detail_3].map(clean).filter(Boolean),
       type: clean(token.conjugated_type), form: clean(token.conjugated_form),
       known: token.word_type !== "UNKNOWN"

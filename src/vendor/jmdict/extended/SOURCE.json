@@ -7,7 +7,7 @@
   "entries": 218930,
   "license": "CC-BY-SA-4.0",
   "buckets": 32,
-  "modification": "Full English entries; hashed lookup shards; exact written noun index; retains reading and sense restrictions",
+  "modification": "Full English entries; hashed lookup shards; exact written noun and mixed-script expression reading index; retains reading and sense restrictions",
   "outputSha256": {
     "00.json.gz": "6eca3e1a9c7ea402c4fe82e66fd07bfb8e7b7ce46978779432ed607207cf4aad",
     "01.json.gz": "a22eb5993b98a9bccfeb072c23a377ce3de796642d27b94c8019bd016c135dfa",
@@ -41,6 +41,6 @@
     "29.json.gz": "2df209f05eb13c6bc83cb9d2cca7a95b43af22e9a9a4a7d9c638fc135adf3c5b",
     "30.json.gz": "81f02f8bad0948f76bdf8228d6e3ea7ed1f160ea0f58df54d78a1f67ac6ab9ba",
     "31.json.gz": "b3c7a1f17b59e09a5d9a4a02f4c21649576dff72abd4ca8a2169ea762a0fd530",
-    "compounds.json.gz": "7dfefe4d65f4786eabf185fccd7ae496b3820f91174099ffe778dbedd056dd09"
+    "compounds.json.gz": "40fccc4f9ebf966a2086bbad09384e4ef49a31bbe94df50b3d6946d6702d1f71"
   }
 }

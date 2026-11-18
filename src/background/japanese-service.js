@@ -134,22 +134,148 @@
     return output;
   }
 
-  function applyContextualReadings(tokens) {
+  // The bundled IPADIC trie indexes all analyses of the exact spelling. Cache
+  // immutable dictionary forms only; sentence-specific choices belong to tokens.
+  const surfaceForms = new Map();
+  function exactForms(analyzer, surface) {
+    if (surfaceForms.has(surface)) return surfaceForms.get(surface);
+    const dict = analyzer.token_info_dictionary;
+    const id = analyzer.viterbi_builder.trie.lookup(surface);
+    const forms = (dict.target_map[id] || []).map(wordId =>
+      analyzer.formatter.formatEntry(wordId, 0, "KNOWN", dict.getFeatures(wordId).split(",")));
+    return put(surfaceForms, surface, forms, 1500);
+  }
+
+  const stemFollowers = new Set(["抜く", "抜ける", "ぬく", "ぬける", "続ける", "つづける",
+    "始める", "終える", "終わる", "直す", "切る", "きる", "尽くす", "出す", "合う"]);
+
+  // Match a subject or object to explicitly marked arguments in JMdict,
+  // not incidental words in examples or in an unrelated sense.
+  function readingForArgument(dict, noun, particle, choices) {
+    const keys = new Set();
+    const sensesFor = token => matchingEntries(dict, token.basic_form, lmJapanese.baseReading(token)).flatMap(entry => entry.s);
+    for (const sense of sensesFor(noun)) {
+      if (!sense.p.includes("n")) continue;
+      for (const gloss of sense.g) {
+        const terms = [gloss.split(" (")[0], ...Array.from(gloss.matchAll(/\(([a-z -]+)\)/gi), m => m[1])];
+        for (const term of terms) {
+          const key = term.toLowerCase().trim();
+          if (/^[a-z][a-z -]{2,30}$/.test(key) && !/^(something|anything|someone|person|thing|place|etc|abbr|esp)$/.test(key)) keys.add(key);
+        }
+      }
+    }
+    if (!keys.size) return null;
+    const matches = [];
+    for (const choice of choices) {
+      if (!lmJapanese.baseReading(choice)) return null;
+      const senses = sensesFor(choice);
+      if (!senses.length) return null;
+      const direct = particle === "を";
+      const marker = direct ? /^to [a-z-]+ \((?:a |an |the )?([^()]+)\)$/i : /\(of ([^()]+)\)/i;
+      const qualifiers = senses.filter(s => s.p.includes(direct ? "vt" : "vi")).flatMap(s => s.g)
+        .map(gloss => marker.exec(gloss)?.[1]).filter(Boolean)
+        .map(label => " " + label.toLowerCase().replace(/[^a-z]+/g, " ").trim() + " ");
+      if (qualifiers.some(q => [...keys].some(k => q.includes(" " + k + " ")))) matches.push(choice);
+    }
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  // Use the reading of a whole attested expression to choose among readings
+  // for one of its tokens. The last verb can be inflected in the subtitle.
+  function readingsInExpression(lexicon, tokens, index, choices) {
+    if (!lexicon || choices.length < 2) return [];
+    for (let size = Math.min(5, tokens.length); size >= 2; size--) {
+      const supported = new Set();
+      for (let start = Math.max(0, index - size + 1); start <= Math.min(index, tokens.length - size); start++) {
+        const span = tokens.slice(start, start + size);
+        if (span.some(t => !t.reading || t.pos === "記号")) continue;
+        // A modifier can make an idiom literal, e.g. テレビの音を上げる.
+        if (start === index && span[0].pos === "名詞" && tokens[start - 1]?.surface_form === "の") continue;
+        const prefix = span.slice(0, -1).map(t => t.surface_form).join("");
+        const last = span[size - 1];
+        for (const choice of choices) {
+          const final = index === start + size - 1 ? choice : last;
+          const readings = lexicon[prefix + final.basic_form];
+          if (!readings) continue;
+          const pieces = span.map((original, i) => {
+            const t = start + i === index ? choice : original;
+            return i === size - 1 ? lmJapanese.baseReading(t) : indexKey(t.reading);
+          });
+          if (pieces.every(Boolean) && readings.some(r => indexKey(r) === pieces.join(""))) supported.add(choice);
+        }
+      }
+      if (supported.size) return [...supported];
+    }
+    return [];
+  }
+
+  function compoundStems(analyzer, lexicon, forms, token, next) {
+    const auxiliary = next?.pos === "助動詞" && /^(ます|たい)$/.test(next.basic_form);
+    if (!auxiliary && next?.pos !== "動詞") return [];
+    const stems = forms.filter(f => f.pos === "動詞" && f.conjugated_form === "連用形" && f.pos_detail_1 === "自立");
+    if (!stems.length || auxiliary) return stems;
+    const compound = token.surface_form + next.basic_form;
+    const ending = lmJapanese.baseReading(next);
+    const readings = new Set(exactForms(analyzer, compound).filter(f => f.pos === "動詞").map(f => indexKey(f.reading)));
+    for (const r of lexicon?.[compound] || []) readings.add(indexKey(r));
+    const attested = ending ? stems.filter(f => readings.has(indexKey(f.reading) + ending)) : [];
+    if (attested.length) return attested;
+    return stemFollowers.has(next.basic_form) && (token.pos === "動詞" || next.pos_detail_1 === "非自立") ? stems : [];
+  }
+
+  function resolveTokenReading(analyzer, dict, lexicon, tokens, index) {
+    const token = tokens[index], next = tokens[index + 1];
+    if (token.word_type !== "KNOWN" || !/^(名詞|動詞|形容詞)$/.test(token.pos) ||
+        token.pos_detail_1 === "固有名詞" || !/\p{Script=Han}/u.test(token.surface_form)) return;
+    const forms = exactForms(analyzer, token.surface_form);
+    if (forms.length < 2) return;
+    const stems = compoundStems(analyzer, lexicon, forms, token, next);
+    const compatible = stems.length ? stems : forms.filter(f => f.pos === token.pos &&
+      f.pos_detail_1 === token.pos_detail_1 && f.conjugated_form === token.conjugated_form &&
+      (token.conjugated_form !== "連用タ接続" || !/^[てたでだ]/.test(next?.surface_form || "") ||
+       /五段・[ガナバマ]行/.test(f.conjugated_type) === /五段・[ガナバマ]行/.test(token.conjugated_type)));
+    const distinct = list => [...new Map(list.map(f => [f.basic_form + "|" + f.reading, f])).values()];
+    let choices = distinct(compatible);
+    // An attested expression can also disambiguate nominal uses across IPADIC
+    // noun subclasses (生 in 生を受ける). Never borrow name-only readings.
+    const commonNoun = !stems.length && token.pos === "名詞";
+    const phraseForms = commonNoun ? distinct(forms.filter(f => f.pos === "名詞" &&
+      f.pos_detail_1 !== "固有名詞" && f.basic_form === token.basic_form)) : choices;
+    const supported = readingsInExpression(lexicon, tokens, index, phraseForms);
+    if (supported.length) choices = supported;
+    if (choices.length > 1 && dict && choices[0].pos === "動詞" &&
+        tokens[index - 1]?.pos === "助詞" && /^[をが]$/.test(tokens[index - 1].surface_form) && tokens[index - 2]?.pos === "名詞") {
+      const match = readingForArgument(dict, tokens[index - 2], tokens[index - 1].surface_form, choices);
+      if (match) choices = [match];
+    }
+    const same = f => f.basic_form === token.basic_form && f.reading === token.reading && f.pos === token.pos;
+    let choice = token;
+    if (choices.length && !choices.some(same) && (supported.length || stems.length)) {
+      const costs = analyzer.token_info_dictionary.dictionary;
+      choice = choices.reduce((a, b) => costs.getShort(a.word_id + 4) <= costs.getShort(b.word_id + 4) ? a : b);
+    } else if (choices.length === 1) {
+      if (!same(choices[0])) choice = choices[0];
+    }
+    const resolved = choice === token ? token : { ...choice, word_position: token.word_position };
+    if (commonNoun && supported.length && resolved.pos_detail_1 !== token.pos_detail_1) {
+      resolved.pos_detail_1 = "一般";
+      resolved.pos_detail_2 = resolved.pos_detail_3 = "*";
+    }
+    if (choices.length > 1) {
+      resolved.otherReadings = [...new Set(choices.map(f => lmJapanese.toHiragana(f.reading)))]
+        .filter(reading => reading !== lmJapanese.toHiragana(resolved.reading));
+    }
+    return resolved;
+  }
+
+  function applyContextualReadings(tokens, analyzer, dict, lexicon) {
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
       const after = tokens[index + 1];
-      // IPADIC can pick the sound-changed stem of 戦ぐ (そよぐ) here.
-      // These compound verbs take the regular stem of 戦う (たたかう).
-      if (token.surface_form === "戦い" && after?.pos === "動詞" &&
-          /^(抜く|抜ける|ぬく|ぬける|続ける|つづける|始める|終える)$/.test(after.basic_form)) {
-        Object.assign(token, {
-          basic_form: "戦う", reading: "タタカイ", pronunciation: "タタカイ", basic_reading: "タタカウ",
-          pos: "動詞", pos_detail_1: "自立", pos_detail_2: "*", pos_detail_3: "*",
-          conjugated_type: "五段・ワ行促音便", conjugated_form: "連用形"
-        });
+      if (token.surface_form !== "後") {
+        tokens[index] = resolveTokenReading(analyzer, dict, lexicon, tokens, index) || token;
         continue;
       }
-      if (token.surface_form !== "後") continue;
       const before = tokens[index - 1];
       // In a completed action followed by に／で, 「後」 means "afterward"
       // and is read あと. Limit this override to the explicit past auxiliary
@@ -170,7 +296,7 @@
     if (sentences.has(text)) return sentences.get(text);
     const pending = (async () => {
       const [analyzer, dict, lexicon] = await Promise.all([tokenizer(), dictionary().catch(() => null), compounds().catch(() => null)]);
-      const raw = applyContextualReadings(analyzer.tokenize(text));
+      const raw = applyContextualReadings(analyzer.tokenize(text), analyzer, dict, lexicon);
       for (const token of raw) {
         const lemma = token.basic_form;
         // Preserve the contextual reading of dictionary forms such as 生/なま.

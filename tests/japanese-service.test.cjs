@@ -126,6 +126,38 @@ test("戦い in 戦い抜いた uses the fighting verb for both ruby and the con
   assert.equal(noun.lemma, "戦い");
 });
 
+test("whole dictionary expressions select different readings of the same glyph in inflected sentences", async () => {
+  const { service, reads } = harness();
+  for (const [sentence, word, reading] of [
+    ["赤い角が生えた。", "角", "つの"], ["失言で角が立った。", "角", "かど"],
+    ["ついに音を上げた。", "音", "ね"], ["テレビの音を上げた。", "音", "おと"],
+    ["この町で生を受けた。", "生", "せい"]
+  ]) {
+    const tokens = await service.analyze(sentence);
+    assert.equal(tokens.map(t => t.surface).join(""), sentence);
+    assert.equal(tokens.find(t => t.surface === word).reading, reading, sentence);
+  }
+  assert.equal(reads.filter(url => /extended\/\d+/.test(url)).length, 0);
+});
+
+test("particle and dictionary senses distinguish verb readings; unknown context retains alternatives", async () => {
+  const { service } = harness();
+  for (const [object, surfaceReading, lemmaReading] of [["ピアノ", "ひき", "ひく"], ["算盤", "はじき", "はじく"]]) {
+    const sentence = object + "を弾き続けた。";
+    const token = (await service.analyze(sentence)).find(t => t.surface === "弾き");
+    assert.equal(token.reading, surfaceReading);
+    const card = await service.lookup(token.surface, "en", sentence, { start: token.start }, true);
+    assert.equal(card.japanese.baseReading, lemmaReading);
+    assert.equal(card.dictionaryMatched, true);
+  }
+  const context = "彼が弾き続けた。";
+  const unresolved = (await service.lookup("弾き", "en", context, {}, true)).japanese;
+  assert.deepEqual([unresolved.reading, ...unresolved.parts[0].otherReadings].sort().join("/"), "はじき/ひき");
+  const snow = (await service.analyze("雪が降り続けた。")).find(t => t.surface === "降り");
+  assert.equal(snow.reading, "ふり");
+  assert.ok(!snow.parts[0].otherReadings?.length);
+});
+
 test("dictionary matching respects headword-specific readings and sense restrictions", () => {
   const { service } = harness();
   const entry = { id: "fixture", k: ["甲", "乙"], r: [{ t: "こう", a: ["甲"] }, { t: "おつ", a: ["乙"] }],

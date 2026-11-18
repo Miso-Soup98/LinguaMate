@@ -123,6 +123,9 @@ var lmJapaneseUi = (() => {
     if (analysis.baseReading && analysis.baseReading !== analysis.reading) add("原形读音", reading(analysis.baseReading));
     add("词性", analysis.pos);
     add("活用", analysis.conjugation);
+    for (const part of analysis.parts || []) {
+      if (part.otherReadings?.length) add("「" + escape(part.surface) + "」的其他可能读音", part.otherReadings);
+    }
     const candidates = Array.isArray(analysis.candidates) ? analysis.candidates.filter((item) => item && typeof item === "object") : [];
     const alternatives = candidates.length > 1 ? `<div class="lm-ja-candidates"><div class="lm-pos">可能的词条 / 活用</div><ul>${candidates.map((item) => `<li>${escape([text(item.lemma) || text(item.word), reading(item.baseReading) || reading(item.reading), display(item.pos), display(item.conjugation), text(item.interpretation)].filter(Boolean).join(" · "))}</li>`).join("")}</ul></div>` : "";
     const uncertain = analysis.ambiguous === true || analysis.conjugation?.ambiguous === true || candidates.length > 1;

@@ -76,6 +76,12 @@ test("metadata cards escape subtitle markup and show alternative analyses honest
   assert.equal(ui.cardHtml({ surface: "生" }).includes("假名"), false);
 });
 
+test("a card labels unresolved readings with the part of the subtitle they belong to", () => {
+  const html = ui.cardHtml({ surface: "弾き", reading: "ひき", parts: [{surface: "弾き", otherReadings: ["はじき"]}] });
+  assert.match(html, /「弾き」的其他可能读音/);
+  assert.match(html, /はじき/);
+});
+
 test("real engine conjugation objects and interpretation candidates remain visible", () => {
   const html = ui.cardHtml({ ...eat, conjugation: { type: "一段", form: "未然形", labels: ["否定"], ambiguous: true }, candidates: [{ interpretation: "可能" }, { interpretation: "被动" }] });
   for (const text of ["一段", "未然形", "否定", "可能", "被动", "未自动判定语境含义"]) assert.ok(html.includes(text), text);
