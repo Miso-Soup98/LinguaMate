@@ -116,6 +116,11 @@ async function handleMessage(message) {
         result: await lookupWord(message.word, message.from, message.to, message.context,
           message.isPhrase === true ? { ...(isRecord(message.japanese) ? message.japanese : {}), isPhrase: true } : message.japanese, message.staged === true)
       };
+    case "LM_WORD_PREVIEW": {
+      if (!Array.isArray(message.lines) || message.lines.length > 6) throw new Error("invalid_preview_batch");
+      const lines = message.lines.map(line => cleanText(line, "word", 500, false));
+      return { ok: true, glosses: await previewWords(lines, cleanLang(message.from), cleanLang(message.to)) };
+    }
     case "LM_GLOSS_TRANSLATE": {
       if (!Array.isArray(message.lines) || message.lines.length > 8) throw new Error("invalid_gloss_batch");
       const lines = message.lines.map((line) => cleanText(line, "definition", 3000));
@@ -127,6 +132,25 @@ async function handleMessage(message) {
       const clip = await pronounceClip(message.text, message.tl, message.audioUrl);
       return { ok: true, audio: clip.audio || "", mime: clip.mime || "audio/mpeg" };
     }
+    case "LM_SENTENCE_SAVE":
+      return withStorage(async () => {
+        const row = validateSentence(message.item);
+        const sentences = await getSentences();
+        const id = sentenceKey(row);
+        const existing = sentences.findIndex((item) => sentenceKey(item) === id);
+        if (existing < 0) sentences.unshift(row);
+        else sentences[existing] = { ...row, translation: row.translation || sentences[existing].translation };
+        await chrome.storage.local.set({ sentences });
+        return { ok: true };
+      });
+    case "LM_SENTENCE_DELETE":
+      return withStorage(async () => {
+        const sentences = (await getSentences()).filter((row) => sentenceKey(row) !== message.id);
+        await chrome.storage.local.set({ sentences });
+        return { ok: true };
+      });
+    case "LM_SENTENCE_LIST":
+      return withStorage(async () => ({ ok: true, items: (await getSentences()).map(row => ({ ...row, id: sentenceKey(row) })) }));
     case "LM_VOCAB_LIST":
       return withStorage(async () => ({ ok: true, ...await getLearningData() }));
     case "LM_VOCAB_ADD":
@@ -513,11 +537,28 @@ async function markKnown(word, lang, isKnown, japanese) {
   return known;
 }
 
+async function getSentences() {
+  return (await chrome.storage.local.get({ sentences: [] })).sentences || [];
+}
+
+function sentenceKey(row) {
+  return JSON.stringify([row.video, row.start, row.lang, row.nativeLang, row.text]);
+}
+
+function validateSentence(row) {
+  if (!isRecord(row) || !Number.isFinite(row.start) || row.start < 0) throw new Error("invalid_sentence");
+  return {
+    text: cleanText(row.text, "text", 12000, false), translation: cleanText(row.translation, "translation", 16000),
+    video: cleanText(row.video, "video", 3000, false), title: cleanText(row.title, "title", 1000),
+    lang: cleanLang(row.lang), nativeLang: cleanLang(row.nativeLang), start: row.start
+  };
+}
+
 function validateBackup(data) {
   if (!isRecord(data) || data.format !== BACKUP_FORMAT || data.version !== BACKUP_VERSION ||
       typeof data.exportedAt !== "string" || !Number.isFinite(Date.parse(data.exportedAt)) ||
       !Array.isArray(data.vocab) || !isRecord(data.known) || data.vocab.length > 100000 ||
-      Object.keys(data.known).length > 100000 || Object.keys(data).some((key) => !["format", "version", "exportedAt", "vocab", "known"].includes(key))) {
+      Object.keys(data.known).length > 100000 || Object.keys(data).some((key) => !["format", "version", "exportedAt", "vocab", "known", "sentences"].includes(key))) {
     throw new Error("invalid_backup");
   }
   const vocab = data.vocab.map(validateVocab);
@@ -553,12 +594,14 @@ function validateBackup(data) {
     if (row.status === "known") known[key] = true;
     else if (matchingKnownKeys(known, row, knownIndex).length) row.status = "known";
   }
-  return { vocab, known };
+  if (data.sentences !== undefined && (!Array.isArray(data.sentences) || data.sentences.length > 100000)) throw new Error("invalid_backup");
+  return { vocab, known, sentences: data.sentences?.map(validateSentence) };
 }
 
 async function exportLearningData() {
   const { vocab, known } = await getLearningData();
-  return { format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), vocab, known };
+  const sentences = await getSentences();
+  return { sentences, format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), vocab, known };
 }
 
 async function importLearningData(backup, mode) {
@@ -605,7 +648,12 @@ async function importLearningData(backup, mode) {
       }
     }
   }
-  await chrome.storage.local.set({ vocab, known });
+  const updated = { vocab, known };
+  if (imported.sentences !== undefined) {
+    const rows = mode === "merge" ? [...imported.sentences, ...await getSentences()] : imported.sentences;
+    updated.sentences = [...new Map(rows.map(row => [sentenceKey(row), row])).values()];
+  }
+  await chrome.storage.local.set(updated);
   return { vocabCount: vocab.length, knownCount: Object.keys(known).length, mode };
 }
 
@@ -869,6 +917,22 @@ async function translateEntries(entries, to) {
   }));
 }
 
+async function translateIndexed(items, from, to) {
+  const found = new Map();
+  const translated = await translateGoogle(items.map(({ line, index }) => `[${index}] ${line}`).join("\n"), from, to, false);
+  const pattern = /[\[［](\d+)[\]］]\s*([\s\S]*?)(?=\s*[\[［]\d+[\]］]|$)/g;
+  String(translated.text || "").replace(pattern, (_, index, gloss) => {
+    found.set(Number(index), gloss.replace(/\s+/g, " ").trim()); return "";
+  });
+  return found;
+}
+
+async function previewWords(lines, from, to) {
+  if (from === to) return lines;
+  const glosses = await translateIndexed(lines.map((line, index) => ({ line, index })), from, to);
+  return lines.map((_, index) => glosses.get(index) || "");
+}
+
 async function translateLines(lines, from, to) {
   const clean = lines.map((line) => String(line || "").replace(/\s+/g, " ").trim());
   if (!clean.some(Boolean) || from === to) return clean;
@@ -889,11 +953,7 @@ async function translateLines(lines, from, to) {
   if (owned.length) {
     const found = new Map();
     try {
-      const translated = await translateGoogle(owned.map(({ line, index }) => `[${index}] ${line}`).join("\n"), from, to, false);
-      const pattern = /[\[［](\d+)[\]］]\s*([\s\S]*?)(?=\s*[\[［]\d+[\]］]|$)/g;
-      String(translated.text || "").replace(pattern, (_, index, gloss) => {
-        found.set(Number(index), gloss.replace(/\s+/g, " ").trim()); return "";
-      });
+      for (const [index, gloss] of await translateIndexed(owned, from, to)) found.set(index, gloss);
     } catch (_) { /* Missing batch markers use individual requests below. */ }
     await Promise.all(owned.map(async (item) => {
       let result = { text: found.get(item.index) || "", phonetic: "" };

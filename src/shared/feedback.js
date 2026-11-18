@@ -68,6 +68,22 @@
     });
   }
 
+  globalThis.lmSentenceButton = (getItem) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "lm-sentence-save";
+    button.textContent = "保存句子";
+    button.addEventListener("click", async event => {
+      event.stopPropagation();
+      const item = getItem();
+      if (!item || button.disabled) return;
+      button.disabled = true;
+      const result = await send("LM_SENTENCE_SAVE", { item });
+      button.disabled = false;
+      notify(result.ok ? "已加入「收藏的句子」" : result.error, result.ok ? "success" : "error");
+    });
+    return button;
+  };
   globalThis.lmReportStatus = report;
   globalThis.lmNotify = notify;
   globalThis.lmSendMessage = send;

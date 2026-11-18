@@ -203,3 +203,13 @@ test("Japanese polysemy retains late senses and usage notes instead of silently 
   assert.ok(hang.entries.length > 10);
   assert.ok(hang.entries.some(entry => entry.items[0].usage));
 });
+
+test("opening a component uses its position in the original compound", async () => {
+  const { service } = harness();
+  const context = "昨日勉強しました。";
+  const group = (await service.analyze(context)).find(token => token.lemma === "勉強する");
+  const partIndex = group.parts.findIndex(part => part.surface === "し");
+  const card = await service.lookup("し", "en", context, { groupSurface: group.surface, groupStart: group.start, partIndex }, true);
+  assert.equal(card.japanese.lemma, "する");
+  assert.equal(card.japanese.pos, "動詞");
+});

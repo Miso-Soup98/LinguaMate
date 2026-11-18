@@ -51,6 +51,10 @@ window.fixtureCheck = (label,passed) => { if(!passed) throw new Error(label); fi
 window.addEventListener('error',event=>{document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:event.message,checks:fixtureResults}))));});
 window.settleFixture = async () => { for(let i=0;i<100;i++) await Promise.resolve(); };
 window.checkWordInteraction = async (platform, label) => {
+  const sentence = platform.ui.panelBody.querySelector(".lm-sentence-save");
+  sentence.click(); await settleFixture();
+  sentence.click(); await settleFixture();
+  fixtureCheck(label+' saves the clicked sentence once with its timestamp',fixtureData.local.sentences.length===1 && fixtureData.local.sentences[0].text===platform.state.cues[0].text && fixtureData.local.sentences[0].start===platform.state.cues[0].start);
   const words = platform.ui.learningLine.querySelectorAll('.lm-word');
   const first = words[0], second = words[1];
   fixtureDeferredLookup = true;
@@ -90,19 +94,15 @@ window.checkWordInteraction = async (platform, label) => {
     word.fixtureHover=true;word.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,relatedTarget:from}));
   };
   try {
-    enter(first);advance(150);
+    enter(first);
+    fixtureCheck(label+' reopening a cached word on hover is immediate',first.classList.contains('lm-word-active')&&!platform.ui.dict.classList.contains('lm-hidden'));
     const ruby=document.createElement('ruby'),rt=document.createElement('rt');rt.textContent='reading';ruby.append(rt);first.append(ruby);
     first.dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:rt}));
     rt.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,relatedTarget:first}));
-    advance(69);fixtureCheck(label+' initial hover requires deliberate intent',platform.ui.dict.classList.contains('lm-hidden'));
-    advance(1);await settleFixture();
-    fixtureCheck(label+' ruby movement does not restart the initial hover delay',first.classList.contains('lm-word-active')&&!platform.ui.dict.classList.contains('lm-hidden'));
-    enter(second,first);advance(119);
-    fixtureCheck(label+' quick crossings retain the selected word',first.classList.contains('lm-word-active'));
-    advance(1);await settleFixture();
-    fixtureCheck(label+' continuous selection switches at 120 milliseconds',second.classList.contains('lm-word-active')&&!first.classList.contains('lm-word-active'));
-    enter(first,second);advance(60);enter(second,first);advance(500);
-    fixtureCheck(label+' returning to the selected word cancels the intermediate switch',second.classList.contains('lm-word-active')&&fixtureLookups.length===count);
+    enter(second,first);
+    fixtureCheck(label+' hovering the cached neighbour switches synchronously',second.classList.contains('lm-word-active')&&!first.classList.contains('lm-word-active'));
+    advance(500);
+    fixtureCheck(label+' cached hover does not request either word again',fixtureLookups.length===count);
     ruby.remove();platform.hideDict();
   } finally {
     window.setTimeout=originalSet;window.clearTimeout=originalClear;
@@ -132,6 +132,7 @@ let button=y.ui.dict.querySelector('.lm-dict-save');button.click();await y.ui.vo
 fixtureCheck('YouTube persists a confirmed save',fixtureData.local.vocab.length===1&&button.getAttribute('aria-pressed')==='true');
 button.click();await y.ui.vocabButton.pending;
 fixtureCheck('YouTube second click removes the saved record',fixtureData.local.vocab.length===0&&button.getAttribute('aria-pressed')==='false');
+y.state.status='ready';y.renderTranscript();
 await checkWordInteraction(y,'YouTube');
 v.currentTime=10;y.renderCurrent();
 fixtureCheck('YouTube hides expired captions but keeps replay navigation',y.ui.learningLine.classList.contains('lm-hidden')&&y.state.index===0&&y.state.activeIndex===-1);

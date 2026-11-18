@@ -213,6 +213,15 @@
   async function resolveAnalysis(surface, context, hint) {
     const hintPhrase = hint && hint.isPhrase === true;
     const contextTokens = context && context.length <= 12000 ? await analyze(context) : [];
+    if (Number.isInteger(hint?.partIndex) && typeof hint.groupSurface === "string") {
+      let group = contextTokens.find(token => token.start === hint.groupStart && token.surface === hint.groupSurface);
+      if (!group) group = (await analyze(hint.groupSurface)).find(token => token.surface === hint.groupSurface);
+      const part = group?.parts?.[hint.partIndex];
+      if (part && part.surface === surface) {
+        return { ...part, text: surface, isWordLike: true, parts: [part], candidates: [],
+          grammar: /^(助詞|助動詞)$/.test(part.pos), conjugation: { type: part.type, form: part.form, labels: [] } };
+      }
+    }
     const matches = contextTokens.filter((token) => token.isWordLike && token.surface === surface);
     let analysis = matches.find((token) => Number.isInteger(hint && hint.start) && token.start === hint.start);
     if (!analysis && hint && hint.baseReading) analysis = matches.find((token) => token.baseReading === hint.baseReading);

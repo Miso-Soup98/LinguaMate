@@ -219,7 +219,7 @@ test("JSON backup round trips every learning field and omits unrelated local and
   const source = harness({ local: { vocab: [row("日本語", { lang: "ja" })], known: { "de:haus": true }, privateToken: "secret" }, sync: { apiKey: "secret" } });
   const exported = await source.send({ type: "LM_DATA_EXPORT" });
   assert.equal(exported.ok, true);
-  assert.deepEqual(Object.keys(exported.data).sort(), ["exportedAt", "format", "known", "version", "vocab"]);
+  assert.deepEqual(Object.keys(exported.data).sort(), ["exportedAt", "format", "known", "sentences", "version", "vocab"]);
   assert.equal(JSON.stringify(exported).includes("secret"), false);
   const destination = harness();
   const result = await destination.send({ type: "LM_DATA_IMPORT", backup: JSON.parse(JSON.stringify(exported.data)), mode: "replace" });
@@ -303,4 +303,19 @@ test("restore shares the queue with tab mutations and keeps subsequent changes",
   assert.ok(results.every((result) => result.ok));
   assert.deepEqual(results[3].vocab.map((item) => item.word), ["after-import", "restored"]);
   assert.equal(results[3].vocab[1].reps, 8);
+});
+
+test("parallel sentence saves deduplicate the same occurrence and survive backup and removal", async () => {
+  const h = harness();
+  const item = { text: "勉強しました。", translation: "学习了。", video: "episode", title: "字幕", lang: "ja", nativeLang: "zh-CN", start: 2500 };
+  const save = () => h.send({ type: "LM_SENTENCE_SAVE", item });
+  assert.ok((await Promise.all([save(), save()])).every(r => r.ok));
+  const { items } = await h.send({ type: "LM_SENTENCE_LIST" });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].translation, item.translation);
+  const { data } = await h.send({ type: "LM_DATA_EXPORT" });
+  await h.send({ type: "LM_SENTENCE_DELETE", id: items[0].id });
+  assert.equal((await h.send({ type: "LM_SENTENCE_LIST" })).items.length, 0);
+  await h.send({ type: "LM_DATA_IMPORT", backup: data, mode: "merge" });
+  assert.deepEqual((await h.send({ type: "LM_SENTENCE_LIST" })).items, items);
 });

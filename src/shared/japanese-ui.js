@@ -49,6 +49,7 @@ var lmJapaneseUi = (() => {
       span.className = "lm-word word lm-ja-word";
       span.dataset.word = surface;
       span.dataset.surface = surface;
+      if (Number.isInteger(token.start)) span.dataset.start = String(token.start);
       span.dataset.lang = options.lang || "ja";
       span.dataset.lemma = text(token.lemma);
       span.dataset.reading = reading(token.reading);
@@ -88,7 +89,28 @@ var lmJapaneseUi = (() => {
     const data = element?.dataset || {};
     let candidates = [];
     try { const parsed = JSON.parse(data.candidates || "[]"); if (Array.isArray(parsed)) candidates = parsed; } catch (_) {}
-    return { surface: text(data.surface) || text(data.word), lemma: text(data.lemma), reading: reading(data.reading), baseReading: reading(data.baseReading), pos: text(data.pos), conjugation: text(data.conjugation), entryId: text(data.entryId), common: data.common === "true" ? true : data.common === "false" ? false : null, grammar: data.grammar === "true", candidates, ambiguous: data.ambiguous === "true" };
+    return { ...(data.start !== undefined ? { start: Number(data.start) } : {}), surface: text(data.surface) || text(data.word), lemma: text(data.lemma), reading: reading(data.reading), baseReading: reading(data.baseReading), pos: text(data.pos), conjugation: text(data.conjugation), entryId: text(data.entryId), common: data.common === "true" ? true : data.common === "false" ? false : null, grammar: data.grammar === "true", candidates, ambiguous: data.ambiguous === "true" };
+  }
+
+  function bindGroup(card, group, selectedIndex, choose) {
+    if (!group || group.isPhrase || !(group.parts?.length > 1)) return;
+    const nav = card.ownerDocument.createElement("div");
+    nav.className = "lm-group-parts";
+    nav.setAttribute("role", "group");
+    nav.setAttribute("aria-label", "整组与组成部分");
+    function button(label, index, title) {
+      const el = card.ownerDocument.createElement("button");
+      el.type = "button";
+      el.textContent = label;
+      el.title = title;
+      el.setAttribute("aria-pressed", String(index === selectedIndex));
+      el.onclick = event => { event.stopPropagation(); if (index !== selectedIndex) choose(index); };
+      nav.appendChild(el);
+    }
+    button("整组 · " + group.surface, -1, group.lemma);
+    group.parts.forEach((part, index) => button(part.surface, index,
+      [part.lemma, part.reading, part.pos].filter(Boolean).join(" · ")));
+    card.querySelector(".lm-dict-head")?.after(nav);
   }
 
   function cardHtml(analysis) {
@@ -141,5 +163,5 @@ var lmJapaneseUi = (() => {
     return { ...(fullWord ? tokens[0] : {}), text: surface, surface, tokens, isPhrase: !fullWord, lang: selected[0]?.dataset.lang || "ja" };
   }
 
-  return { renderWords, cardHtml, selectionFrom, tokenFrom, textWithoutReading, identity, isKnown, display };
+  return { renderWords, bindGroup, cardHtml, selectionFrom, tokenFrom, textWithoutReading, identity, isKnown, display };
 })();

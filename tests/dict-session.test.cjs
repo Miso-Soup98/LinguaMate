@@ -72,3 +72,32 @@ test('card growth keeps its anchor edge stable, stays in the viewport and recove
   assert.equal(card.style.bottom, 'auto');
   assert.equal(card.style.maxHeight, '560px');
 });
+
+test("preload batches only nearby short meanings and discards stale work on a seek", async () => {
+  let timer, release;
+  const calls = [];
+  const scope = vm.createContext({ setTimeout: fn => { timer = fn; }, clearTimeout() {} });
+  vm.runInContext(fs.readFileSync(path.resolve(__dirname, '../src/shared/dict-session.js'), 'utf8'), scope);
+  const session = scope.lmCreateDictSession((type, payload) => {
+    calls.push({ type, payload });
+    return new Promise(resolve => { release = resolve; });
+  });
+  const line = prefix => ({ querySelectorAll: () => ['a','b','c','d'].map(x => ({ dataset: { word: prefix+x } })) });
+  const makeQuery = el => ({ ...query, word: el.dataset.word });
+  let current = true;
+  session.preload('first', () => [line('one'), line('two')], makeQuery, () => current);
+  timer();
+  assert.deepEqual(Array.from(calls[0].payload.lines), ['onea','oneb','onec','twoa','twob','twoc']);
+  current = false;
+  session.preload('next', () => [line('new')], makeQuery, () => true);
+  timer();
+  assert.equal(calls.length, 1);
+  release({ ok: true, glosses: ['过期'] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(session.preview({ ...query, word: 'onea' }), '');
+  assert.equal(calls.length, 2);
+  release({ ok: true, glosses: ['新词'] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(session.preview({ ...query, word: 'newa' }), '新词');
+  assert.ok(calls.every(c => c.type === 'LM_WORD_PREVIEW'));
+});

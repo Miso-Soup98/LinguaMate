@@ -199,6 +199,7 @@ async function changeVocab(type, payload, success) {
 document.querySelector("nav").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-view]");
   if (!button) return;
+  if (button.dataset.view === "sentences") loadSentences();
   document.querySelectorAll("nav button").forEach((el) => el.classList.toggle("active", el === button));
   document.querySelectorAll("main > section").forEach((section) => { section.hidden = section.id !== `view-${button.dataset.view}`; });
 });
@@ -255,7 +256,7 @@ ui.form.addEventListener("submit", (event) => {
 
 function validateBackup(value) {
   if (!value || value.format !== "linguamate-backup" || value.version !== 1 || typeof value.exportedAt !== "string" || !Number.isFinite(Date.parse(value.exportedAt)) || !Array.isArray(value.vocab) || !value.known || typeof value.known !== "object" || Array.isArray(value.known)) throw new Error("不是有效的语伴 JSON 备份（版本 1）");
-  if (value.vocab.length > 100000 || Object.keys(value.known).length > 100000 || Object.keys(value).some((key) => !["format", "version", "exportedAt", "vocab", "known"].includes(key))) throw new Error("备份格式或记录数量不受支持");
+  if (value.vocab.length > 100000 || Object.keys(value.known).length > 100000 || Object.keys(value).some((key) => !["format", "version", "exportedAt", "vocab", "known", "sentences"].includes(key))) throw new Error("备份格式或记录数量不受支持");
   const ids = new Set();
   const words = new Set();
   for (const item of value.vocab) {
@@ -318,7 +319,7 @@ document.getElementById("importFile").addEventListener("change", async (event) =
 document.getElementById("importBackup").addEventListener("click", async () => {
   if (!importedBackup || dataBusy) return;
   const mode = document.getElementById("importMode").value;
-  if (mode === "replace" && !confirm("替换会清除当前生词与复习进度，并使用备份中的记录。建议先导出当前完整备份。确定替换吗？")) return;
+  if (mode === "replace" && !confirm("替换会覆盖备份中包含的收藏句子，并清除当前生词与复习进度，并使用备份中的记录。建议先导出当前完整备份。确定替换吗？")) return;
   dataBusy = true;
   vocabVersion += 1;
   const file = document.getElementById("importFile");
@@ -343,3 +344,32 @@ for (const name of ["learningLang", "nativeLang"]) LM_LANGUAGES.forEach((lang) =
 setSettingsEnabled(false);
 loadVocab();
 loadSettings();
+
+async function loadSentences() {
+  const list = document.getElementById("sentenceList");
+  const response = await lmSendMessage("LM_SENTENCE_LIST");
+  if (!response.ok) { list.textContent = response.error; return; }
+  list.replaceChildren();
+  if (!response.items.length) list.textContent = "还没有收藏的句子。在字幕栏点击「保存句子」即可加入。";
+  for (const item of response.items) {
+    const article = document.createElement("article");
+    const original = document.createElement("strong");
+    original.lang = item.lang;
+    original.textContent = item.text;
+    const translation = document.createElement("p");
+    translation.textContent = item.translation;
+    const source = document.createElement("small");
+    const seconds = Math.floor(item.start / 1000);
+    source.textContent = item.title + " · " + Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+    const remove = document.createElement("button");
+    remove.textContent = "移除";
+    remove.onclick = async () => {
+      remove.disabled = true;
+      const result = await lmSendMessage("LM_SENTENCE_DELETE", { id: item.id });
+      if (result.ok) await loadSentences();
+      else { remove.disabled = false; lmReportStatus(ui.status, result.error, "error"); }
+    };
+    article.append(original, translation, source, remove);
+    list.append(article);
+  }
+}

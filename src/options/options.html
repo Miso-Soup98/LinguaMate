@@ -11,6 +11,7 @@
       <p>生词、闪卡与设置</p>
       <nav>
         <button class="active" data-view="vocab">生词本</button>
+        <button data-view="sentences">收藏的句子</button>
         <button data-view="cards">闪卡复习</button>
         <button data-view="settings">设置</button>
       </nav>
@@ -33,7 +34,7 @@
         </header>
         <details class="backup-box">
           <summary>完整备份与恢复（保留复习进度）</summary>
-          <p>JSON 包含全部生词、例句、复习进度和掌握记录。CSV / Anki 适合其他工具导入，不用于完整恢复。</p>
+          <p>JSON 包含收藏的句子、全部生词、例句、复习进度和掌握记录。CSV / Anki 适合其他工具导入，不用于完整恢复。</p>
           <button id="exportBackup">下载完整 JSON 备份</button>
           <label>选择备份文件 <input id="importFile" type="file" accept=".json,application/json" /></label>
           <label>恢复方式 <select id="importMode"><option value="merge">合并（保留当前同词进度）</option><option value="replace">替换全部（使用备份进度）</option></select></label>
@@ -41,6 +42,11 @@
           <p id="backupStatus" role="status" aria-live="polite">请先选择备份，确认预览后恢复。</p>
         </details>
         <div id="vocabList"></div>
+      </section>
+
+      <section id="view-sentences" hidden>
+        <h2>收藏的句子</h2>
+        <div id="sentenceList"></div>
       </section>
 
       <section id="view-cards" hidden>

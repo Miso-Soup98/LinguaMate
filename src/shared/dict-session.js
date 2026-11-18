@@ -27,7 +27,56 @@ function lmCreateDictSession(send) {
     }
     return clone(await pending.get(key));
   }
-  return { peek, lookup };
+  const previews = new Map();
+  function preview(query) { return previews.get(keyOf(query)) || ""; }
+
+  let warming = false, nextWindow = null, warmTimer, lastWindowKey;
+  async function drainWindow() {
+    if (warming) return;
+    warming = true;
+    try {
+      while (nextWindow) {
+        const { lines, makeQuery, current } = nextWindow;
+        nextWindow = null;
+        if (!current()) continue;
+        const queries = new Map();
+        for (const line of lines()) {
+          if (!line) continue;
+          let count = 0;
+          for (const el of line.querySelectorAll(".lm-word")) {
+            if (el.dataset.grammar === "true" || !/\p{L}/u.test(el.dataset.word)) continue;
+            const query = makeQuery(el);
+            if (query.from === query.to || values.has(keyOf(query)) || preview(query)) continue;
+            queries.set(keyOf(query), query);
+            if (++count === 3) break;
+          }
+        }
+        const batch = [...queries.values()];
+        if (!batch.length) continue;
+        const response = await send("LM_WORD_PREVIEW", {
+          lines: batch.map(q => q.japanese?.lemma || q.word), from: batch[0].from, to: batch[0].to
+        });
+        if (!response?.ok || !current()) continue;
+        batch.forEach((query, index) => {
+          const gloss = response.glosses?.[index];
+          if (gloss) previews.set(keyOf(query), gloss);
+          if (previews.size > 120) previews.delete(previews.keys().next().value);
+        });
+      }
+    } finally { warming = false; }
+  }
+
+  function preload(windowKey, lines, makeQuery, current) {
+    if (!current() || lastWindowKey === windowKey) return;
+    lastWindowKey = windowKey;
+    clearTimeout(warmTimer);
+    nextWindow = null;
+    warmTimer = setTimeout(() => {
+      nextWindow = { lines, makeQuery, current };
+      drainWindow().catch(() => {});
+    }, 350);
+  }
+  return { peek, preview, lookup, preload };
 }
 
 // Choose a side before the loading placeholder is painted. Keep the edge next

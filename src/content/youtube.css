@@ -462,3 +462,8 @@ html.lm-hide-yt-captions .caption-window {
 .lm-caption-editor button { margin-right: 8px; }
 .lm-caption-original { margin-top: 7px; cursor: default; }
 .lm-caption-original summary { cursor: pointer; }
+
+.lm-cue .lm-sentence-save { font: inherit; font-size: 12px; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px; cursor: pointer; padding: 2px 6px; }
+
+.lm-group-parts { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.lm-group-parts button[aria-pressed="true"] { outline: 1px solid currentColor; }

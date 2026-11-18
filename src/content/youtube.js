@@ -311,7 +311,7 @@
   function cueForWord(wordEl) {
     const index = wordEl.closest("[data-index]")?.dataset.index;
     if (index != null && state.cues[index]) return state.cues[index];
-    return state.cues[state.index];
+    return state.cues[state.activeIndex] || state.cues[state.index];
   }
 
   function mountUi() {
@@ -995,6 +995,16 @@
     ui.learningLine.classList.toggle("lm-hidden", !state.settings.showLearning || !cue);
     ui.nativeLine.classList.toggle("lm-hidden", !translationVisible(cue) || !native);
     if (cue) renderWords(ui.learningLine, cue.text, state.settings.learningLang);
+    const from = state.settings.learningLang;
+    const to = state.settings.nativeLang;
+    if (cue && /^(ja|en)(?:-|$)/i.test(from) && typeof lmCreateDictSession === "function") {
+      dictionarySession ||= lmCreateDictSession(send);
+      const windowKey = JSON.stringify([idx, cue.text, state.cues[idx + 1]?.text, from, to]);
+      dictionarySession.preload(windowKey, () => [ui.learningLine, ui.panelBody?.querySelector('[data-index="' + (idx + 1) + '"] .lm-cue-learning')],
+        el => dictionaryQuery(el).query,
+        () => state.settings.enabled && !document.hidden && state.activeIndex === idx && state.cues[idx] === cue &&
+          state.settings.nativeLang === to && state.settings.learningLang === from);
+    }
     if (native) renderWords(ui.nativeLine, native.text, state.settings.nativeLang, state.settings.nativeInteractive);
     if (idx >= 0) {
       for (let i = idx; i < Math.min(state.cues.length, idx + 4); i += 1) queueTranslation(i);
@@ -1111,6 +1121,12 @@
           row.append(original);
         }
       }
+      if (typeof lmSentenceButton === "function") row.append(lmSentenceButton(() => {
+        const selected = state.cues[i];
+        if (!selected) return null;
+        return { text: selected.text, translation: state.nativeCues[i]?.text || "", start: selected.start,
+          video: state.videoId || location.pathname, title: state.title || document.title, lang: state.learningTrack?.languageCode || state.settings.learningLang, nativeLang: state.settings.nativeLang };
+      }));
       fragment.append(row);
     });
     ui.panelBody.replaceChildren(fragment);
@@ -1382,7 +1398,7 @@
     return labels[String(pos || "").toLowerCase()] || pos || "释义";
   }
 
-  function renderDict(data, cue, from, sourceAnalysis = null) {
+  function renderDict(data, cue, from, sourceAnalysis = null, selected = null) {
     const english = String(from || "").toLowerCase().startsWith("en");
     const japanese = from === "ja" ? data.japanese || sourceAnalysis : null;
     const savedWord = japanese?.lemma || data.word;
@@ -1429,6 +1445,11 @@
       ${detailed ? lmWordCard.html(data, cue?.text || "", from) : `${entryHtml}<div class="lm-dict-context">${escapeHtml(cue?.text || "")}</div>`}
       <button class="lm-dict-save">加入生词本</button>
     `;
+    const group = selected?.group || japanese;
+    if (group && typeof lmJapaneseUi !== "undefined") lmJapaneseUi.bindGroup?.(ui.dict, group, selected?.hint?.partIndex ?? -1, index => {
+      const hint = index < 0 ? null : { partIndex: index, groupStart: group.start, groupSurface: group.surface };
+      showDict(hoverWord, hint ? { surface: group.parts[index].surface, context: cue?.text, group, hint } : null);
+    });
     ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
       button.addEventListener("click", async () => {
         const chosen = button.dataset.accent === "uk" ? "uk" : "us";
@@ -1584,7 +1605,7 @@
 
   function scheduleShow(wordEl) {
     if (!wordEl) return;
-    if (hoverWord === wordEl && dictOpen()) {
+    if (hoverWord === wordEl && dictOpen() && ui.dict.dataset.preview !== "true") {
       clearTimeout(hoverTimer);
       pendingHoverWord = null;
       clearTimeout(hideTimer);
@@ -1594,7 +1615,12 @@
     clearTimeout(hoverTimer);
     clearTimeout(hideTimer);
     pendingHoverWord = wordEl;
-    const delay = dictOpen() ? 120 : 220;
+    const hoverQuery = dictionaryQuery(wordEl).query;
+    if (dictionarySession?.peek(hoverQuery) || dictionarySession?.preview(hoverQuery)) {
+      showDict(wordEl, null, true);
+      return;
+    }
+    const delay = 200;
     hoverTimer = setTimeout(() => {
       pendingHoverWord = null;
       if (!wordEl.isConnected || !wordEl.matches(":hover")) return;
@@ -1603,31 +1629,47 @@
     }, delay);
   }
 
-  async function showDict(wordEl, selected = null) {
+  function dictionaryQuery(wordEl, selected = null) {
+    const word = selected?.surface || wordEl.dataset.word;
+    const from = selected?.lang || wordEl.dataset.lang || state.settings.learningLang;
+    const cue = selected?.context ? { ...(cueForWord(wordEl) || {}), text: selected.context } : cueForWord(wordEl);
+    const analysis = from === "ja" && !selected?.isPhrase ? selected?.hint || selected || analysisForWord(wordEl) : null;
+    const query = {
+      word, from, staged: true, to: state.settings.nativeLang, context: cue?.text || "",
+      ...(analysis ? { japanese: analysis } : {}), ...(selected?.isPhrase ? { isPhrase: true } : {})
+    };
+    return { query, cue, analysis };
+  }
+
+  async function showDict(wordEl, selected = null, previewOnHover = false) {
     if (!wordEl || !wordEl.isConnected) return;
     clearTimeout(hoverTimer); clearTimeout(hideTimer); pendingHoverWord = null;
     hoverWord?.classList.remove("lm-word-active");
     hoverWord = wordEl;
     hoverWord.classList.add("lm-word-active");
     rememberCue(wordEl);
-    const word = selected?.surface || wordEl.dataset.word;
-    const from = selected?.lang || wordEl.dataset.lang || state.settings.learningLang;
-    const cue = selected?.context ? { ...(cueForWord(wordEl) || {}), text: selected.context } : cueForWord(wordEl);
-    const analysis = from === "ja" && !selected?.isPhrase ? selected || analysisForWord(wordEl) : null;
     const token = ++state.dictToken;
-    const query = {
-      word, from, staged: true, to: state.settings.nativeLang, context: cue?.text || "",
-      ...(analysis ? { japanese: analysis } : {}), ...(selected?.isPhrase ? { isPhrase: true } : {})
-    };
+    const { query, cue, analysis } = dictionaryQuery(wordEl, selected);
+    const { word, from } = query;
     if (!dictionarySession && typeof lmCreateDictSession === "function") dictionarySession = lmCreateDictSession(send);
     const cached = dictionarySession?.peek(query);
     const oldHeight = dictOpen() ? ui.dict.getBoundingClientRect().height : 0;
     delete ui.dict.dataset.anchorSide;
     ui.dict.classList.remove("lm-hidden");
     ui.dict.scrollTop = 0;
-    if (!cached) ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div><div class="lm-empty" role="status">正在查询…</div>`;
+    const preview = !cached && dictionarySession?.preview(query);
+    ui.dict.dataset.preview = String(Boolean(preview && previewOnHover));
+    if (!cached) {
+      ui.dict.innerHTML = `<div class="lm-dict-word">${escapeHtml(word)}</div>${preview ? `<div class="lm-dict-trans">速译 · ${escapeHtml(preview)}</div>` : ""}<div class="lm-empty" role="status">正在查询…</div>`;
+    }
     placeDict(wordEl);
     if (!cached) ui.dict.style.minHeight = `${Math.min(oldHeight || 140, parseFloat(ui.dict.style.maxHeight) || 560)}px`;
+    if (preview && previewOnHover) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      if (token !== state.dictToken || !wordEl.isConnected ||
+          !(wordEl.matches(":hover") || ui.dict.matches(":hover"))) return;
+      ui.dict.dataset.preview = "false";
+    }
     const res = cached || await (dictionarySession ? dictionarySession.lookup(query) : send("LM_LOOKUP", query));
     if (token !== state.dictToken || hoverWord !== wordEl) return;
     ui.dict.style.minHeight = "";
@@ -1639,7 +1681,7 @@
       return;
     }
     const data = res.result || { word, translation: "", phonetic: "", senses: [], entries: [] };
-    renderDict(data, cue, from, analysis);
+    renderDict(data, cue, from, analysis, selected);
     placeDict(wordEl);
   }
 
@@ -1782,7 +1824,7 @@
     const word = ev.target.closest?.(".lm-word");
     if (state.settings.enabled && word && (ui.subs?.contains(word) || ui.panel?.contains(word)) && (!window.getSelection?.() || window.getSelection().isCollapsed)) {
       ev.preventDefault(); ev.stopPropagation();
-      if (hoverWord !== word || !dictOpen()) showDict(word);
+      if (hoverWord !== word || ui.dict.dataset.preview === "true" || !dictOpen()) showDict(word);
       return;
     }
     if (!ui.dict || ui.dict.classList.contains("lm-hidden")) return;

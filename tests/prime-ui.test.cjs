@@ -99,7 +99,7 @@ test("quick mouse passes cancel lookup; a deliberate hover performs one lookup",
   h.advance(1000);
   assert.equal(h.lookupRequests().length, 0, "sweeping past words must not query or flash cards");
   h.hover(words[2]);
-  h.advance(219);
+  h.advance(199);
   assert.equal(h.lookupRequests().length, 0);
   h.advance(1);
   await h.flush();
@@ -176,13 +176,13 @@ test("continuous word selection switches after a short pause and cached returns 
   h.hover(words[0]); h.advance(220); await h.flush();
   assert.ok(words[0].classList.contains("lm-word-active"));
   h.leave(words[0], words[1]); h.hover(words[1], words[0]);
-  h.advance(119);
+  h.advance(199);
   assert.equal(h.lookupRequests().length, 1);
   h.advance(1); await h.flush();
   assert.equal(h.lookupRequests().length, 2);
   assert.ok(words[1].classList.contains("lm-word-active"));
   assert.equal(words[0].classList.contains("lm-word-active"), false);
-  h.leave(words[1], words[0]); h.hover(words[0], words[1]); h.advance(120);
+  h.leave(words[1], words[0]); h.hover(words[0], words[1]);
   assert.equal(h.lookupRequests().length, 2);
   assert.doesNotMatch(h.prime.ui.dict.textContent, /正在查询/);
   assert.match(h.prime.ui.dict.textContent, /translation:Sentence/);
@@ -227,7 +227,7 @@ test("a pending hover is cancelled when its caption word disappears", () => {
   h.cues();
   const word = h.prime.ui.learningLine.querySelector(".lm-word");
   h.hover(word);
-  h.advance(200);
+  h.advance(199);
   h.video.currentTime = 2.5;
   h.prime.renderCurrent();
   assert.equal(word.isConnected, false);

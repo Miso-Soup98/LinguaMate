@@ -144,3 +144,6 @@ button:disabled, input:disabled, select:disabled { opacity: .55; cursor: wait; }
 .card .card-answer { color: #2dd4bf; font-size: 24px; }
 [hidden] { display: none !important; }
 @media (max-width: 850px) { body { grid-template-columns: 160px 1fr; } main { padding: 18px; } .item { grid-template-columns: 1fr; gap: 6px; } .item menu { margin: 0; padding: 0; } }
+
+#sentenceList article { padding: 1rem 0; border-bottom: 1px solid #ddd; }
+#sentenceList button { margin-inline-start: 1rem; }
