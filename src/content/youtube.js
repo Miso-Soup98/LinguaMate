@@ -262,6 +262,10 @@
     `;
     ui.panel = panel;
     ui.panelBody = $("#lm-panel-body", panel);
+    for (const surface of [ui.subs, panel, ui.dict, ui.bridge]) {
+      surface.addEventListener("mouseover", onWordHover);
+      surface.addEventListener("mouseout", onWordLeave);
+    }
     panel.addEventListener("click", (ev) => {
       const action = ev.target.closest("[data-caption-action]");
       if (action) {
@@ -1765,8 +1769,7 @@
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
       if (pointerInDictZone()) return;
-      const hovered = document.querySelector(".lm-word:hover");
-      if (hovered && (ui.subs?.contains(hovered) || ui.panel?.contains(hovered))) return;
+      if (ui.subs?.querySelector(".lm-word:hover") || ui.panel?.querySelector(".lm-word:hover")) return;
       hideDict();
     }, 260);
   }
@@ -1854,16 +1857,18 @@
   }
 
   function onWordHover(ev) {
-    if (window.getSelection?.() && !window.getSelection().isCollapsed) return;
-    if (inDictZone(ev.target) && ev.target !== hoverWord && !(hoverWord && hoverWord.contains(ev.target))) {
+    if (ev.currentTarget === ui.dict || ev.currentTarget === ui.bridge) {
       clearTimeout(hideTimer);
-      if (ui.dict && ui.dict.contains(ev.target)) { clearTimeout(hoverTimer); pendingHoverWord = null; return; }
-      if (ui.bridge && ui.bridge.contains(ev.target)) return;
+      if (ev.currentTarget === ui.dict) {
+        clearTimeout(hoverTimer);
+        pendingHoverWord = null;
+      }
+      return;
     }
-    const word = ev.target.closest && ev.target.closest(".lm-word");
-    if (word && (ui.subs?.contains(word) || ui.panel?.contains(word))) {
-      scheduleShow(word);
-    }
+    const word = ev.target.closest?.(".lm-word");
+    if (!word || !ev.currentTarget.contains(word) || word.contains(ev.relatedTarget)) return;
+    if (window.getSelection?.()?.isCollapsed === false) return;
+    scheduleShow(word);
   }
 
   function onWordLeave(ev) {
@@ -2106,8 +2111,6 @@
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("keyup", onKeyUp, true);
   document.addEventListener("click", onDocClick, true);
-  document.addEventListener("mouseover", onWordHover);
-  document.addEventListener("mouseout", onWordLeave);
   document.addEventListener("mouseup", updatePhraseQuery);
   document.addEventListener("keyup", updatePhraseQuery);
   document.addEventListener("selectionchange", updatePhraseQuery);

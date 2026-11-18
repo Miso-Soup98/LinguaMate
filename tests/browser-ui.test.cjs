@@ -134,6 +134,21 @@ button.click();await y.ui.vocabButton.pending;
 fixtureCheck('YouTube second click removes the saved record',fixtureData.local.vocab.length===0&&button.getAttribute('aria-pressed')==='false');
 y.state.status='ready';y.renderTranscript();
 await checkWordInteraction(y,'YouTube');
+const foreignControl=document.createElement('button');
+foreignControl.className='lm-word';document.body.append(foreignControl);
+const originalSelection=window.getSelection;
+let selectionReads=0, foreignTraversals=0;
+const foreignClosest=foreignControl.closest.bind(foreignControl);
+foreignControl.closest=(selector)=>{foreignTraversals++;return foreignClosest(selector);};
+window.getSelection=()=>{selectionReads++;return originalSelection.call(window);};
+try {
+  for(const type of ['mouseover','mouseout']) foreignControl.dispatchEvent(new MouseEvent(type,{bubbles:true}));
+  fixtureCheck('Foreign controls never enter YouTube dictionary hover handling',selectionReads===0&&foreignTraversals===0);
+  y.ui.panel.querySelector('.lm-word').dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+  fixtureCheck('Transcript words still receive delegated hover handling',selectionReads>0);
+} finally {
+  window.getSelection=originalSelection;foreignControl.remove();y.hideDict();
+}
 v.currentTime=10;y.renderCurrent();
 fixtureCheck('YouTube hides expired captions but keeps replay navigation',y.ui.learningLine.classList.contains('lm-hidden')&&y.state.index===0&&y.state.activeIndex===-1);
 await Promise.all([chrome.storage.sync.set({enabled:false}),chrome.storage.local.set({vocab:[]})]);await settleFixture();
