@@ -520,9 +520,25 @@
     return String(text).replace(/(?<=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}々。、！？])\s+|\s+(?=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}々。、！？])/gu, "");
   }
 
+  function joinsJapaneseEnding(previous, next) {
+    // Two consecutive speech cues only. A pause, simultaneous captions or a
+    // change of speaker should not extend the earlier subtitle's time window.
+    const gap = next.start - previous.end;
+    if (gap < -100 || gap > 400 || previous.start >= next.start ||
+        next.start - previous.start > 6500 || previous.joinedEnding) return false;
+    // Permit a trailing sound cue, but never swallow the next spoken sentence.
+    const tail = next.text.match(/^([ぁ-ゖ]+)[。！？!?]*(?:[」』])?(?:\s*(?:\[[^\]]{1,20}\]|［[^］]{1,20}］|【[^】]{1,20}】))?$/u)?.[1];
+    if (!tail) return false;
+    const before = previous.text.trimEnd();
+    if (/^た(?:よね|よ|ね)?$/.test(tail)) return /(?:まし|でし|だっ|かっ|なっ|っ|い)$/.test(before);
+    if (/^(?:ます|ました|ません(?:でした)?)(?:よね|よ|ね|か)?$/.test(tail)) {
+      return /[いきぎしじちぢにびひみりえけげせぜてでねべへめれ]$/.test(before);
+    }
+    if (/^なり(?:ます|ました|ません)(?:よね|よ|ね|か)?$/.test(tail)) return /[くに]$/.test(before);
+    return false;
+  }
+
   function mergeCues(rows, options = {}) {
-    // Display boundaries are the platform's timestamps, not sentence length.
-    // Joining several ASR events used to hold the same caption for 8–12 seconds.
     const out = rows.map((original) => {
       const row = { ...original };
       if (options.japanese && options.asr) row.text = japaneseCaptionText(row.text);
@@ -535,7 +551,17 @@
         if (out[i + 1].start > out[i].start) out[i].end = Math.min(out[i].end, out[i + 1].start);
       }
     }
-    return out;
+    if (!options.japanese) return out;
+    const repaired = [];
+    for (const row of out) {
+      const previous = repaired[repaired.length - 1];
+      if (previous && joinsJapaneseEnding(previous, row)) {
+        previous.text += row.text;
+        previous.end = Math.max(previous.end, row.end);
+        previous.joinedEnding = true;
+      } else repaired.push(row);
+    }
+    return repaired;
   }
 
   function cleanCaption(value) {
@@ -549,7 +575,7 @@
   function parseXml(xml, options = {}) {
     const doc = new DOMParser().parseFromString(xml, "text/xml");
     if (doc.getElementsByTagName("parsererror").length) return [];
-    if (doc.documentElement.localName === "tt") return lmParseCaptionTrack(xml).cues;
+    if (doc.documentElement.localName === "tt") return mergeCues(lmParseCaptionTrack(xml).cues, options);
     const rows = [];
     Array.from(doc.getElementsByTagName("text")).forEach((node) => {
       const start = parseFloat(node.getAttribute("start") || "0") * 1000;
@@ -839,7 +865,7 @@
     aligned.forEach((native, index) => {
       const cue = state.cues[index];
       // A late track must not undo a user's edited source or manual retranslation.
-      if (native.text && !cue.translationRevealed && cue.originalText === undefined) {
+      if (native.text && !cue.joinedEnding && !cue.translationRevealed && cue.originalText === undefined) {
         state.nativeCues[index] = { ...native, source: "视频字幕轨道" };
         cue.translationPending = false;
         cue.translationError = false;
@@ -862,7 +888,7 @@
       cue.translationRevealed = true;
       updateTranslationLine(index);
     }
-    if (!force && state.nativeTrackLoading) return;
+    if (!force && state.nativeTrackLoading && !cue.joinedEnding) return;
     if (!force && (state.nativeCues[index]?.text || cue.translationError)) return;
     const key = `${state.loadGen}|${index}|${cue.text}|${state.settings.nativeLang}`;
     if (translationJobs.has(key)) {

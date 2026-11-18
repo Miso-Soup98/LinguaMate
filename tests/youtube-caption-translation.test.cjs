@@ -42,6 +42,44 @@ test('Japanese ASR normalizes word separators without merging playback timestamp
   assert.match(parseEvents({ events }, { japanese: true, asr: false })[0].text, /台風 31 号/);
 });
 
+test('detached Japanese endings share one timeline row and one whole-sentence translation', () => {
+  for (const [head, tail] of [
+    ['タイヤの剥がれで事故が相次ぎまし', 'た。'],
+    ['回収したタイヤは約650万本に上り', 'ます。[音楽]'],
+    ['95年続けてきた取引まで切れてしまい', 'ました。'],
+    ['普通ならここでアメリカから手を引きたく', 'なりますよね。']
+  ]) {
+    const h = harness();
+    const events = [head, tail, '次の話です。'].map((utf8, i) => ({
+      tStartMs: 3000 * i, dDurationMs: 5500, segs: [{ utf8 }]
+    }));
+    h.state.cues = h.parseEvents({ events }, { japanese: true, asr: true });
+    assert.deepEqual(plain(h.state.cues.map(cue => cue.text)), [head + tail, '次の話です。']);
+    assert.equal(h.state.cues[0].end, 6000);
+    assert.equal(h.currentIndex(5999), 0);
+    assert.equal(h.currentIndex(6000), 1);
+    h.state.nativeTrackLoading = true;
+    h.state.directTranslation = true;
+    h.queueTranslation(0);
+    assert.deepEqual(h.requests.map(q => q.text), [head + tail]);
+    h.installNativeTranslations([{ start: 3000, end: 6000, text: '塔。' }]);
+    assert.equal(h.state.nativeCues[0], undefined);
+  }
+});
+
+test('Japanese cue repair respects pauses, completed sentences and new dialogue', () => {
+  const h = harness();
+  for (const [head, tail, at] of [
+    ['事故が相次ぎまし', 'た。', 3400],
+    ['事故が相次ぎました。', 'ます。', 2000],
+    ['売上が上り', 'ます。これは別の話です。', 2000],
+    ['売上が上り', '［音楽］', 2000]
+  ]) {
+    const events = [head, tail].map((utf8, i) => ({ tStartMs: i ? at : 0, dDurationMs: 2000, segs: [{ utf8 }] }));
+    assert.equal(h.parseEvents({ events }, { japanese: true, asr: true }).length, 2);
+  }
+});
+
 test('rolling ASR windows switch at the next cue rather than lag behind it', () => {
   const h = harness();
   const starts = [1800, 4000, 7000, 9400, 11200];
