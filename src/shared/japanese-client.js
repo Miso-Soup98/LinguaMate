@@ -42,7 +42,7 @@ var lmJapaneseClient = (() => {
   }
 
   function deferUntilVisible(target, entry, start) {
-    if (typeof IntersectionObserver !== "function" || !target.matches(".lm-cue-learning, .lm-cue-native") || target.closest(".lm-cue.active") || cache.has(entry.input)) {
+    if (entry.options.audioTokens || typeof IntersectionObserver !== "function" || !target.matches(".lm-cue-learning, .lm-cue-native") || target.closest(".lm-cue.active") || cache.has(entry.input)) {
       start(true);
       return;
     }
@@ -131,13 +131,13 @@ var lmJapaneseClient = (() => {
     if (!isJapanese(options.lang || "ja")) { invalidate(target); return Promise.resolve([]); }
     const key = JSON.stringify([input, options.lang || "ja", options.furigana || "unknown"]);
     const previous = targets.get(target);
-    if (previous?.key === key) {
+    if (previous?.key === key && previous.options.audioTokens === options.audioTokens) {
       previous.options = options;
       applyMarkers(target, previous.tokens, options);
       return previous.promise;
     }
     invalidate(target);
-    const entry = { key, input, options, tokens: cache.get(input) || fallback(input), promise: null };
+    const entry = { key, input, options, tokens: options.audioTokens || cache.get(input) || fallback(input), promise: null };
     targets.set(target, entry);
     lmJapaneseUi.renderWords(target, entry.tokens, options);
     applyMarkers(target, entry.tokens, options);
@@ -148,7 +148,7 @@ var lmJapaneseClient = (() => {
       deferUntilVisible(target, entry, (priority) => {
         if (entry.started) return;
         entry.started = true;
-        analyze(input, priority).then((tokens) => {
+        (options.audioTokens ? Promise.resolve(options.audioTokens) : analyze(input, priority)).then((tokens) => {
           if (targets.get(target) !== entry) return tokens;
           const finish = () => {
             if (targets.get(target) !== entry || target.isConnected === false) return;

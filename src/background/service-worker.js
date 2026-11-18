@@ -86,7 +86,23 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+let creatingAudioPage;
+async function prepareAudioPage(sender) {
+  if (!sender.tab || sender.frameId !== 0 || !/^https:\/\/(?:www\.|m\.)?youtube\.com\//.test(sender.url || "")) throw new Error("请在 YouTube 视频页使用原声校对");
+  const url = chrome.runtime.getURL("src/audio/offscreen.html");
+  if (!(await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [url] })).length) {
+    creatingAudioPage ||= chrome.offscreen.createDocument({ url, reasons: ["WORKERS"], justification: "在本机处理用户选中的日语字幕音频" })
+      .finally(() => { creatingAudioPage = null; });
+    await creatingAudioPage;
+  }
+  return { ok: true };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "LM_AUDIO_PREPARE") {
+    prepareAudioPage(sender).then(sendResponse, error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   handleMessage(message)
     .then(sendResponse)
     .catch((err) => sendResponse({ ok: false, error: String(err && err.message ? err.message : err) }));
@@ -126,6 +142,8 @@ async function handleMessage(message) {
       const lines = message.lines.map((line) => cleanText(line, "definition", 3000));
       return { ok: true, glosses: await translateLines(lines, "en", cleanLang(message.to, "zh-CN")) };
     }
+    case "LM_JA_AUDIO_READINGS":
+      return { ok: true, tokens: await lmJapaneseService.audioReadings(message.text, message.kana) };
     case "LM_JA_ANALYZE":
       return { ok: true, tokens: await lmJapaneseService.analyze(message.text) };
     case "LM_PRONOUNCE": {

@@ -27,6 +27,15 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - 完整 JSON 备份与恢复，保留词条、掌握记录和复习进度；支持合并或确认后替换
 - 任意网页：右键「用语伴查阅」或「用语伴阅读」
 
+### YouTube 日语原声校对（1.14.0）
+
+播放日语音轨并打开语伴的日语字幕栏，点击顶部的「开启原声校对」。播放过目标句后，点击该行的「原声校对本句」。如果还没录全，点击「重播本句并校对」即可补录。支持最长 18 秒的字幕。
+
+- 「回听本句」播放选中的音频。面板分别显示原字幕、日文听写和听到的假名。
+- 听写和字幕有出入时，可以「采用听写并重译」，也可以用「校正原文」自行修改。点「查看原字幕」可以恢复。
+- 只有整句读音能唯一对应词典候选时，语伴才提供注音替换。听写与原文一致且假名识别置信度较高时，自动更新这一句的注音。点击「恢复词典注音」可撤销。
+- 默认关闭。开启后只在内存暂存播放器最近约 30 秒的声音。首次校对从 Hugging Face 下载约 440 MB 模型并缓存在本机。语音识别在本机完成，采用新原文后的翻译沿用已有翻译服务。需要 Chrome 116 或更新版本；初次下载速度和每句识别耗时取决于网络和电脑性能。
+
 ### 加载与连续查词（1.11.1）
 
 - YouTube 和 Prime Video 合并重复字幕请求，复用成功加载的内容；同一字幕轨道再次到达时保留原文、译文及正在查阅的单词。YouTube 临时重读失败时保留已有字幕，切换视频后丢弃旧响应。
@@ -109,6 +118,8 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - YouTube、翻译接口和词典接口：拉取字幕、词义和读音
 
 ## English
+
+On Japanese YouTube captions, enable audio review in the transcript and select a sentence to compare its subtitle, local transcription and spoken kana. The first review downloads approximately 440 MB of model data. Clips are processed on-device. Changes apply to the current viewing session and can be undone.
 
 ### What it does
 

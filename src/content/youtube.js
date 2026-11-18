@@ -39,6 +39,7 @@
   let translationWorkers = 0;
   const translationJobs = new Map();
   let translationObserver;
+  let audioReview = null;
 
   const ui = {};
 
@@ -116,11 +117,11 @@
     }
   }
 
-  function renderWords(target, text, lang, interactive = true) {
+  function renderWords(target, text, lang, interactive = true, audioTokens = null) {
     if (lang === "ja" && interactive && typeof lmJapaneseClient !== "undefined") {
       target.dataset.lmJapaneseLine = "1";
       const rendering = lmJapaneseClient.render(target, text || "", {
-        lang, furigana: state.settings.japaneseFurigana,
+        lang, audioTokens, furigana: state.settings.japaneseFurigana,
         known: japaneseKnown, saved: japaneseSaved,
         onAnalyzed: () => { syncWordMarkers(); if (hoverWord && !hoverWord.isConnected) hideDict(); }
       });
@@ -266,12 +267,21 @@
       if (action) {
         ev.stopPropagation();
         if (action.dataset.captionAction === "show-native") { persist({ showNative: true }); return; }
+        if (action.dataset.captionAction === "capture") { toggleAudioCapture(); return; }
         const index = Number(action.closest("[data-index]")?.dataset.index);
+        if (action.dataset.captionAction === "undo-reading" && state.cues[index]) {
+          clearAudioReview();
+          delete state.cues[index].audioTokens;
+          hideDict(); renderTranscript(); renderCurrent();
+          toast("已恢复本句的词典注音");
+          return;
+        }
+        if (action.dataset.captionAction === "audio") reviewAudio(index);
         if (action.dataset.captionAction === "edit") editCaption(index);
         if (action.dataset.captionAction === "translate") queueTranslation(index, true);
         return;
       }
-      if (ev.target.closest(".lm-caption-editor, .lm-caption-original")) return;
+      if (ev.target.closest(".lm-caption-editor, .lm-caption-original, .lm-audio-review")) return;
       if (ev.target.closest(".lm-word")) return;
       const tab = ev.target.closest("[data-tab]");
       if (tab) {
@@ -316,6 +326,8 @@
 
   function mountUi() {
     if (!currentVideoId()) {
+      clearAudioReview();
+      if (typeof lmYoutubeAudio !== "undefined") lmYoutubeAudio.stop();
       invalidateJapaneseLines(ui.panel);
       invalidateJapaneseLines(ui.root);
       ui.panel?.remove();
@@ -711,6 +723,8 @@
 
   async function performCaptionLoad(force, videoId, key) {
     if (state.captionKey !== key) {
+      clearAudioReview();
+      if (typeof lmYoutubeAudio !== "undefined") lmYoutubeAudio.stop();
       invalidateJapaneseLines(ui.panel);
       invalidateJapaneseLines(ui.root);
       hideDict();
@@ -963,6 +977,123 @@
     }
   }
 
+  function clearAudioReview() {
+    audioReview?.controller.abort();
+    audioReview?.panel.remove();
+    audioReview = null;
+  }
+
+  async function toggleAudioCapture() {
+    clearAudioReview();
+    if (lmYoutubeAudio.active) { lmYoutubeAudio.stop(); renderTranscript(); return; }
+    const id = currentVideoId(), video = videoEl();
+    if (!id || !video || video.closest(".ad-showing, .ad-interrupting")) return toast("请在正片播放时开启原声校对");
+    try {
+      await lmYoutubeAudio.start(video, () => currentVideoId() === id && videoEl() === video && state.settings.enabled &&
+        /^ja(?:-|$)/i.test(state.learningTrack?.languageCode || state.settings.learningLang),
+        () => { clearAudioReview(); if (ui.panelBody && state.tab === "subs") renderTranscript(); });
+      renderTranscript();
+    } catch (error) { lmNotify(error.message, "error"); }
+  }
+
+  async function reviewAudio(index, replay = false) {
+    const cue = state.cues[index], video = videoEl(), id = currentVideoId();
+    if (!cue || !video || !id || !lmYoutubeAudio.active) return;
+    clearAudioReview();
+    const controller = new AbortController();
+    const panel = document.createElement("div");
+    panel.className = "lm-audio-review";
+    const status = document.createElement("p");
+    status.setAttribute("role","status");
+    panel.append(status);
+    ui.panelBody.querySelector(`.lm-cue[data-index="${index}"]`)?.append(panel);
+    const source = cue.text;
+    const current = () => !controller.signal.aborted && lmYoutubeAudio.active && id === currentVideoId() &&
+      state.cues[index] === cue && cue.text === source && video === videoEl() && state.settings.enabled;
+    const button = (label, fn) => {
+      const el = document.createElement("button");
+      el.type = "button"; el.textContent = label;
+      el.onclick = e => { e.stopPropagation(); if (current()) fn(); };
+      panel.append(el);
+    };
+    const review = audioReview = { panel, cue, controller, replaying: false };
+    button("关闭", clearAudioReview);
+    try {
+      const start = cue.start/1000, end = cue.end/1000;
+      if (video.closest(".ad-showing, .ad-interrupting")) throw new Error("广告结束后可校对本句");
+      if (end-start > 18 || source.length > 500) throw new Error("本句过长，原声校对支持 18 秒以内的字幕");
+      let clip = lmYoutubeAudio.slice(start,end);
+      if (!clip && !replay) {
+        status.textContent = "暂存中还没有这句的完整原声。";
+        button("重播本句并校对", () => reviewAudio(index, true));
+        return;
+      }
+      if (!clip) {
+        review.replaying = true;
+        status.textContent = "正在回放并取得本句原声…";
+        video.currentTime = Math.max(0,start-.35);
+        await video.play();
+        const deadline = Date.now() + 45000;
+        while (current() && Date.now() < deadline && !clip) {
+          await sleep(70);
+          if (!current() || video.closest(".ad-showing, .ad-interrupting") || video.currentTime > end+.75) break;
+          clip = lmYoutubeAudio.slice(start,end);
+          if (video.paused) break;
+        }
+        if (!current()) return;
+        if (!clip) throw new Error("未取得完整原声，请保持正常播放后重试");
+        review.replaying = false;
+        if (state.settings.autoPause) video.pause();
+      }
+      button("回听本句", () => lmYoutubeAudio.replay(clip));
+      status.textContent = "正在准备原声校对…";
+      const result = await lmYoutubeAudio.recognize(clip, controller.signal, msg => { if (current()) status.textContent = msg; });
+      if (!current()) return;
+      const line = (label, value) => { const p = document.createElement("p"); p.textContent = label + "　" + value; panel.append(p); };
+      line("原字幕", source);
+      line("原声听写", result.text || "未识别出日语");
+      line("原声假名", result.kana || result.kanaError || "未识别出假名");
+      const normalize = str => str.normalize("NFKC").replace(/[\p{P}\p{Z}\s]/gu, "");
+      const same = normalize(result.text) === normalize(source);
+      status.textContent = same ? "听写与原文一致" : "请回听并核对差异";
+      if (result.text && !same) button("采用听写并重译", async () => {
+        const checked = await send("LM_JA_AUDIO_READINGS", { text: result.text, kana: result.kana });
+        if (!current()) return;
+        clearAudioReview(); applyCaption(index, result.text, checked.tokens);
+      });
+      if (!result.kana) return;
+      const checked = await send("LM_JA_AUDIO_READINGS", { text: source, kana: result.kana });
+      if (!current()) return;
+      if (checked.tokens) {
+        const apply = () => {
+          cue.audioTokens = checked.tokens;
+          renderTranscript(); renderCurrent(); hideDict();
+          status.textContent = "本句注音已按原声更新";
+        };
+        if (same && result.confidentKana) apply();
+        else button("采用原声注音", apply);
+      } else {
+        status.textContent += "。保留现有注音，可对照原声假名回听。";
+      }
+    } catch (error) {
+      if (current()) status.textContent = error.message || "原声校对失败，请重试";
+    } finally {
+      review.replaying = false;
+    }
+  }
+
+  function applyCaption(index, text, audioTokens = null) {
+    const cue = state.cues[index];
+    cue.originalText ??= cue.text;
+    cue.text = text;
+    cue.audioTokens = audioTokens;
+    cue.translationPending = false;
+    cue.translationError = false;
+    state.nativeCues[index] = null;
+    hideDict(); renderTranscript(); renderCurrent(); queueTranslation(index, true);
+    toast("原文已更新，正在重新翻译");
+  }
+
   function editCaption(index) {
     const cue = state.cues[index];
     const row = ui.panelBody?.querySelector(`.lm-cue[data-index="${index}"]`);
@@ -978,16 +1109,7 @@
       const text = input.value.trim();
       if (!text) { input.setCustomValidity("请输入字幕原文"); input.reportValidity(); return; }
       if (state.cues[index] !== cue) { form.remove(); return; }
-      cue.originalText ??= cue.text;
-      cue.text = text;
-      cue.translationPending = false;
-      cue.translationError = false;
-      state.nativeCues[index] = null;
-      hideDict();
-      renderTranscript();
-      renderCurrent();
-      queueTranslation(index, true);
-      toast("原文已更新，正在重新翻译");
+      clearAudioReview(); applyCaption(index, text);
     });
     input.addEventListener("input", () => input.setCustomValidity(""));
     row.append(form);
@@ -1020,7 +1142,7 @@
     const native = state.nativeCues[idx];
     ui.learningLine.classList.toggle("lm-hidden", !state.settings.showLearning || !cue);
     ui.nativeLine.classList.toggle("lm-hidden", !translationVisible(cue) || !native);
-    if (cue) renderWords(ui.learningLine, cue.text, state.settings.learningLang);
+    if (cue) renderWords(ui.learningLine, cue.text, state.settings.learningLang, true, cue.audioTokens);
     const from = state.settings.learningLang;
     const to = state.settings.nativeLang;
     if (cue && /^(ja|en)(?:-|$)/i.test(from) && typeof lmCreateDictSession === "function") {
@@ -1093,6 +1215,14 @@
         show.textContent = "显示全部译文";
         notice.append(document.createTextNode(" 当前译文已关闭。"), show);
       }
+      if (typeof lmYoutubeAudio !== "undefined") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.captionAction = "capture";
+        button.textContent = lmYoutubeAudio.active ? "关闭原声校对" : "开启原声校对";
+        notice.append(document.createTextNode(" "), button);
+        if (lmYoutubeAudio.active) notice.append(document.createTextNode(" 请播放日语音轨。暂存最近 30 秒的声音，首次校对下载约 440 MB 模型。"));
+      }
       fragment.append(notice);
     }
     state.cues.forEach((cue, i) => {
@@ -1105,7 +1235,7 @@
       time.textContent = formatTime(cue.start);
       const learning = document.createElement("div");
       learning.className = "lm-cue-learning";
-      renderWords(learning, cue.text, state.settings.learningLang);
+      renderWords(learning, cue.text, state.settings.learningLang, true, cue.audioTokens);
       row.append(time, learning);
       const native = state.nativeCues[i]?.text || "";
       // Keep a stable target for the translated track arriving after source.
@@ -1125,7 +1255,18 @@
         const retry = actions.querySelector('[data-caption-action="translate"]');
         retry.disabled = cue.translationPending === true;
         retry.textContent = cue.translationPending ? "翻译中…" : cue.translationError ? "重试翻译" : "整句重译";
+        if (typeof lmYoutubeAudio !== "undefined" && lmYoutubeAudio.active) {
+          const audio = document.createElement("button");
+          audio.type = "button"; audio.dataset.captionAction = "audio"; audio.textContent = "原声校对本句";
+          actions.append(audio);
+        }
+        if (cue.audioTokens) {
+          const undo = document.createElement("button");
+          undo.type = "button"; undo.dataset.captionAction = "undo-reading"; undo.textContent = "恢复词典注音";
+          actions.append(undo);
+        }
         row.append(actions);
+        if (audioReview?.cue === cue) row.append(audioReview.panel);
         if (cue.originalText !== undefined && cue.originalText !== cue.text) {
           const original = document.createElement("details");
           original.className = "lm-caption-original";
@@ -1136,6 +1277,7 @@
           const undo = document.createElement("button");
           undo.textContent = "恢复原字幕";
           undo.addEventListener("click", () => {
+            clearAudioReview(); delete cue.audioTokens;
             cue.text = cue.originalText;
             delete cue.originalText;
             cue.translationError = false;
@@ -1473,7 +1615,7 @@
     `;
     const group = selected?.group || japanese;
     if (group && typeof lmJapaneseUi !== "undefined") lmJapaneseUi.bindGroup?.(ui.dict, group, selected?.hint?.partIndex ?? -1, index => {
-      const hint = index < 0 ? null : { partIndex: index, groupStart: group.start, groupSurface: group.surface };
+      const hint = index < 0 ? null : { partIndex: index, groupStart: group.start, groupSurface: group.surface, groupAudioReading: group.audioReading ? group.reading : undefined };
       showDict(hoverWord, hint ? { surface: group.parts[index].surface, context: cue?.text, group, hint } : null);
     });
     ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
@@ -1808,7 +1950,7 @@
     const ms = video.currentTime * 1000;
     const previous = state.cues[state.activeIndex];
     const elapsed = state.lastTickMs === null ? Infinity : ms - state.lastTickMs;
-    if (state.settings.autoPause && !video.seeking && !state.peeking && !video.paused && previous && elapsed >= 0 && elapsed <= 1000 && state.lastTickMs < previous.end && ms >= previous.end) video.pause();
+    if (state.settings.autoPause && !audioReview?.replaying && !video.seeking && !state.peeking && !video.paused && previous && elapsed >= 0 && elapsed <= 1000 && state.lastTickMs < previous.end && ms >= previous.end) video.pause();
     state.lastTickMs = ms;
     if (currentIndex(ms) !== state.activeIndex) renderCurrent();
   }
@@ -1909,6 +2051,7 @@
     if (!result) return;
     if (result.hideNative) state.cues.forEach((cue) => { cue.translationRevealed = false; });
     if (result.settingsChanged) {
+      if (!state.settings.enabled || result.reloadCaptions) { clearAudioReview(); if (typeof lmYoutubeAudio !== "undefined") lmYoutubeAudio.stop(); }
       syncToolbar();
       placePanel();
       applyCaptionVisibility();
@@ -1954,6 +2097,10 @@
     });
   });
 
+  document.addEventListener("yt-navigate-start", () => {
+    clearAudioReview();
+    if (typeof lmYoutubeAudio !== "undefined") lmYoutubeAudio.stop();
+  });
   document.addEventListener("yt-navigate-finish", () => { mountUi(); if (hasBooted) loadCaptions(); });
   document.addEventListener("yt-page-data-updated", () => mountUi());
   document.addEventListener("keydown", onKeyDown, true);

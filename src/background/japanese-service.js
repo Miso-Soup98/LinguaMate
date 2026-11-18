@@ -368,12 +368,66 @@
       .sort((left, right) => score(right.s[0]) - score(left.s[0]));
   }
 
+  function audioChoices(unit, analyzer) {
+    const head = unit.parts?.[0];
+    if (!head || unit.compound || unit.lemma !== head.lemma || !unit.reading?.startsWith(head.reading) ||
+        !/\p{Script=Han}/u.test(head.surface)) return [unit];
+    const choices = [unit];
+    for (const form of exactForms(analyzer, head.surface)) {
+      if (form.pos !== head.pos || form.basic_form !== head.lemma || form.conjugated_form !== (head.form || "*")) continue;
+      if (form.pos_detail_1 === "固有名詞" && head.posDetail?.[0] !== "固有名詞") continue;
+      const reading = lmJapanese.toHiragana(form.reading);
+      const baseReading = lmJapanese.baseReading(form);
+      if (!reading || !baseReading) continue;
+      const whole = reading + unit.reading.slice(head.reading.length);
+      if (choices.some(c => c.reading === whole)) continue;
+      const changed = { ...unit, reading: whole, baseReading, audioReading: true,
+        entryId: "", parts: [{ ...head, reading, baseReading }, ...unit.parts.slice(1)] };
+      changed.termKey = lmJapanese.termKey(changed);
+      choices.push(changed);
+    }
+    return choices;
+  }
+
+  const spokenKana = value => lmJapanese.toHiragana(value).replace(/[^ぁ-ゖー]/g, "").replace(/を/g, "お")
+    .replace(/([おこごそぞとどのほぼぽもよろょ])う/g, "$1ー").replace(/([えけげせぜてでねへべぺめれ])い/g, "$1ー");
+
+  async function audioReadings(text, heard) {
+    if (typeof heard !== "string" || heard.length > 500 || typeof text !== "string" || text.length > 500) return null;
+    if (/[^ぁ-ゖァ-ヶー\s]/u.test(heard)) return null;
+    const kana = spokenKana(heard);
+    if (kana.length < 3) return null;
+    const [units, analyzer] = await Promise.all([analyze(text), tokenizer()]);
+    // Accept a unique full-sentence path through dictionary pronunciations.
+    // Unknown words, partial matches and ambiguous boundaries yield no change.
+    let paths = new Map([[0, []]]);
+    for (const unit of units) {
+      const next = new Map();
+      for (const candidate of audioChoices(unit, analyzer)) {
+        let sound = candidate.reading || candidate.surface;
+        if (candidate.pos === "助詞") sound = ({ "は":"わ", "へ":"え", "を":"お" })[candidate.surface] || sound;
+        if (candidate.isWordLike && !/^[ぁ-ゖァ-ヶー]+$/u.test(sound)) return null;
+        sound = spokenKana(sound);
+        for (const [at, path] of paths) {
+          if (!kana.startsWith(sound, at)) continue;
+          const end = at + sound.length;
+          next.set(end, next.has(end) || !path ? null : [...path, candidate]);
+        }
+      }
+      paths = next;
+      if (!paths.size) return null;
+    }
+    const tokens = paths.get(kana.length);
+    return tokens?.some(t => t.audioReading) ? tokens : null;
+  }
+
   async function resolveAnalysis(surface, context, hint) {
     const hintPhrase = hint && hint.isPhrase === true;
     const contextTokens = context && context.length <= 12000 ? await analyze(context) : [];
     if (Number.isInteger(hint?.partIndex) && typeof hint.groupSurface === "string") {
       let group = contextTokens.find(token => token.start === hint.groupStart && token.surface === hint.groupSurface);
       if (!group) group = (await analyze(hint.groupSurface)).find(token => token.surface === hint.groupSurface);
+      if (group && hint.groupAudioReading) group = audioChoices(group, await tokenizer()).find(c => c.reading === hint.groupAudioReading) || group;
       const part = group?.parts?.[hint.partIndex];
       if (part && part.surface === surface) {
         return { ...part, text: surface, isWordLike: true, parts: [part], candidates: [],
@@ -384,6 +438,7 @@
     let analysis = matches.find((token) => Number.isInteger(hint && hint.start) && token.start === hint.start);
     if (!analysis && hint && hint.baseReading) analysis = matches.find((token) => token.baseReading === hint.baseReading);
     if (!analysis && matches.length === 1) analysis = matches[0];
+    if (analysis && hint?.audioReading) analysis = audioChoices(analysis, await tokenizer()).find(c => c.reading === hint.reading) || analysis;
     const units = analysis ? [analysis] : await analyze(surface);
     if (!hintPhrase && units.length === 1 && units[0].isWordLike) return { ...units[0] };
     // A range lookup keeps the whole phrase. A partial word is never assigned a
@@ -491,5 +546,5 @@
     };
   }
 
-  globalThis.lmJapaneseService = { analyze, lookup, matchingEntries };
+  globalThis.lmJapaneseService = { analyze, lookup, matchingEntries, audioReadings };
 })();

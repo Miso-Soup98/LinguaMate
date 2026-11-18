@@ -40,3 +40,12 @@ node --test tests/*.test.cjs
 ```
 
 Review the generated `SOURCE.json` and dictionary tests, then update the script's pinned release and SHA-256. Publish the refreshed data, these notices and the licence files together. Existing installed extensions receive new data with extension updates; analysis never downloads executable code or sends captions to the dictionary supplier.
+
+## Local Japanese speech recognition
+
+The YouTube audio worker bundles the browser distributions of [Transformers.js 3.8.1](https://www.npmjs.com/package/@huggingface/transformers/v/3.8.1) and [ONNX Runtime Web 1.22.0-dev.20250409-89f8206ba4](https://www.npmjs.com/package/onnxruntime-web/v/1.22.0-dev.20250409-89f8206ba4). The two ONNX imports in the Transformers bundle resolve to the packaged WASM-only entry point. The extension ships the WASM loader and binary alongside it.
+
+- [Transformers.js licence](src/vendor/audio-asr/LICENSE-transformers.txt) and the [licence of the bundled Hugging Face Jinja implementation](src/vendor/audio-asr/LICENSE-jinja.txt)
+- [ONNX Runtime licence](src/vendor/audio-asr/LICENSE-onnxruntime.txt) and [third-party notices](src/vendor/audio-asr/ThirdPartyNotices-onnxruntime.txt)
+
+Model data downloads on demand from the pinned [Xenova/whisper-base snapshot](https://huggingface.co/Xenova/whisper-base/tree/64da57285918e20ea79ea5c88eed7197933abaa8) for Japanese transcription and [shrippen/kaiwa-kana-ctc snapshot](https://huggingface.co/shrippen/kaiwa-kana-ctc/tree/99dd836ea672ee18abc88c7d6bb54fbbd187835b) for kana recognition. These models run locally.

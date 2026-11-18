@@ -48,6 +48,7 @@ var lmJapaneseUi = (() => {
       const span = document.createElement("span");
       span.className = "lm-word word lm-ja-word";
       span.dataset.word = surface;
+      if (token.audioReading) span.dataset.audioReading = "true";
       span.dataset.surface = surface;
       if (Number.isInteger(token.start)) span.dataset.start = String(token.start);
       span.dataset.lang = options.lang || "ja";
@@ -89,7 +90,7 @@ var lmJapaneseUi = (() => {
     const data = element?.dataset || {};
     let candidates = [];
     try { const parsed = JSON.parse(data.candidates || "[]"); if (Array.isArray(parsed)) candidates = parsed; } catch (_) {}
-    return { ...(data.start !== undefined ? { start: Number(data.start) } : {}), surface: text(data.surface) || text(data.word), lemma: text(data.lemma), reading: reading(data.reading), baseReading: reading(data.baseReading), pos: text(data.pos), conjugation: text(data.conjugation), entryId: text(data.entryId), common: data.common === "true" ? true : data.common === "false" ? false : null, grammar: data.grammar === "true", candidates, ambiguous: data.ambiguous === "true" };
+    return { ...(data.audioReading === "true" ? { audioReading: true } : {}), ...(data.start !== undefined ? { start: Number(data.start) } : {}), surface: text(data.surface) || text(data.word), lemma: text(data.lemma), reading: reading(data.reading), baseReading: reading(data.baseReading), pos: text(data.pos), conjugation: text(data.conjugation), entryId: text(data.entryId), common: data.common === "true" ? true : data.common === "false" ? false : null, grammar: data.grammar === "true", candidates, ambiguous: data.ambiguous === "true" };
   }
 
   function bindGroup(card, group, selectedIndex, choose) {

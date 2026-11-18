@@ -42,6 +42,7 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       };
       window.chrome={runtime:{id:'ja-browser-fixture',onInstalled:{addListener(){}},onMessage:{addListener(){}},sendMessage(message,callback){
         fixtureMessages.push(structuredClone(message));
+        if(message.type==='LM_JA_AUDIO_READINGS')return callback({ok:true,tokens:window.fixtureAudioTokens||null});
         if(message.type==='LM_JA_ANALYZE')return callback({ok:true,tokens:fixtureJapaneseTokens(message.text)});
         if(message.type==='LM_TRANSLATE'){
           if(window.fixtureHoldTranslation){(window.fixtureTranslationCallbacks||=[]).push(()=>callback({ok:true,result:{text:'整句译文：'+message.text}}));return;}
@@ -136,6 +137,33 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       fixtureCheck('Original source is retained visibly for comparison',y.ui.panelBody.querySelector('.lm-caption-original p').textContent.includes('気少衛生ひり'));
       y.ui.panelBody.querySelector('.lm-caption-original button').click();await settleFixture();
       fixtureCheck('Undo restores and retranslates the original subtitle',y.state.cues[0].text.includes('気少衛生ひり')&&!y.state.cues[0].originalText&&y.ui.nativeLine.textContent.includes('気少衛生ひり'));
+      window.lmYoutubeAudio={
+        active:false, start(){this.active=true;}, stop(){this.active=false;},
+        slice:()=>new Float32Array(8000), recognize:async()=>window.fixtureAudioResult
+      };
+      y.renderTranscript();
+      y.ui.panelBody.querySelector('[data-caption-action="capture"]').click();await settleFixture();
+      const audioButton=()=>y.ui.panelBody.querySelector('[data-caption-action="audio"]');
+      const reviewButton=label=>[...y.ui.panelBody.querySelectorAll('.lm-audio-review button')].find(button=>button.textContent===label);
+      const beforeAudio=y.state.cues[0].text;
+      window.fixtureAudioResult={text:'気象衛星です。',kana:'きしょうえいせいです',confidentKana:false};
+      audioButton().click();await settleFixture();
+      fixtureCheck('Listening suggestions leave subtitle text intact until accepted',y.state.cues[0].text===beforeAudio&&!!reviewButton('采用听写并重译'));
+      reviewButton('采用听写并重译').click();await settleFixture();
+      fixtureCheck('Accepted audio text is retranslated with an undo path',y.state.cues[0].text===fixtureAudioResult.text&&y.ui.nativeLine.textContent.includes(fixtureAudioResult.text));
+      y.ui.panelBody.querySelector('.lm-caption-original button').click();await settleFixture();
+      fixtureCheck('Undoing accepted audio restores the original text',y.state.cues[0].text===beforeAudio);
+      window.fixtureAudioTokens=[{surface:beforeAudio,lemma:beforeAudio,reading:'きしょう',audioReading:true,isWordLike:true}];
+      window.fixtureAudioResult={text:beforeAudio,kana:'きしょう',confidentKana:false};
+      audioButton().click();await settleFixture();
+      fixtureCheck('Uncertain acoustic readings require a separate choice',!y.state.cues[0].audioTokens&&!!reviewButton('采用原声注音'));
+      reviewButton('采用原声注音').click();await settleFixture();
+      reviewButton('关闭').click();await settleFixture();
+      fixtureCheck('Accepted reading reaches the current overlay',!!y.ui.learningLine.querySelector('[data-audio-reading="true"]'));
+      y.ui.panelBody.querySelector('[data-caption-action="undo-reading"]').click();await settleFixture();
+      fixtureCheck('Dictionary ruby can be restored after the review is closed',!y.state.cues[0].audioTokens&&!y.ui.learningLine.querySelector('[data-audio-reading="true"]'));
+      y.ui.panelBody.querySelector('[data-caption-action="capture"]').click();await settleFixture();
+      fixtureCheck('Disabling audio removes capture actions',!audioButton()&&!lmYoutubeAudio.active);
       window.fixtureTranslationFailure=true;y.state.nativeCues=[];
       y.ui.panelBody.querySelector('[data-caption-action="translate"]').click();await settleFixture();
       fixtureCheck('Translation failure is visible and can be retried',y.ui.panelBody.querySelector('.lm-cue-native').textContent.includes('翻译失败'));

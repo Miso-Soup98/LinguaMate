@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "default_locale": "zh_CN",
   "action": {
     "default_title": "__MSG_extName__",
@@ -22,7 +22,9 @@
   "background": {
     "service_worker": "src/background/service-worker.js"
   },
-  "permissions": ["storage", "contextMenus", "scripting", "activeTab"],
+  "minimum_chrome_version": "116",
+  "content_security_policy": {"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"},
+  "permissions": ["offscreen", "storage", "contextMenus", "scripting", "activeTab"],
   "host_permissions": [
     "https://www.youtube.com/*",
     "https://youtube.com/*",
@@ -83,6 +85,7 @@
         "src/shared/vocab-button.js",
         "src/shared/word-card.js",
         "src/shared/dict-session.js",
+        "src/content/youtube-audio.js",
         "src/content/youtube.js"
       ],
       "css": ["src/content/youtube.css"],

@@ -289,3 +289,25 @@ test("opening a component uses its position in the original compound", async () 
   assert.equal(card.japanese.lemma, "する");
   assert.equal(card.japanese.pos, "動詞");
 });
+
+test("spoken kana selects a dictionary reading only for a unique whole caption match", async () => {
+  const { service } = harness();
+  const text = "弾いた。";
+  const original = (await service.analyze(text))[0];
+  assert.equal(original.reading, "ひいた");
+  const corrected = await service.audioReadings(text, "はじいた");
+  const token = corrected[0];
+  assert.equal(token.reading, "はじいた");
+  assert.equal(token.baseReading, "はじく");
+  const card = await service.lookup(token.surface, "en", text, token, true);
+  assert.equal(card.japanese.baseReading, "はじく");
+  assert.equal((await service.analyze(text))[0].reading, original.reading);
+  assert.equal(await service.audioReadings(text, "ひいた"), null);
+  assert.equal(await service.audioReadings(text, "はじい"), null);
+  assert.equal(await service.audioReadings(text, "はじいたよ"), null);
+  assert.equal(await service.audioReadings(text, "noise はじいた"), null);
+  const repeated = await service.audioReadings("弾いた。弾いた。", "ひいたはじいた");
+  assert.deepEqual(Array.from(repeated.filter(t => t.surface === "弾いた"), t => t.reading), ["ひいた", "はじいた"]);
+  const tomorrow = await service.audioReadings("明日はいい天気ですね。", "あすわいいてんきですね");
+  assert.equal(tomorrow[0].reading, "あす");
+});
