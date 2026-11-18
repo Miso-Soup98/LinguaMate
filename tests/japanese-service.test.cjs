@@ -181,6 +181,33 @@ test("compound merging respects particles, spaces, original offsets and copula s
   }
 });
 
+test("purpose and destination suffixes are selectable with their nominal or verb-stem base", async () => {
+  const { service } = harness();
+  for (const [sentence, surface, lemma, reading, parts] of [
+    ["日本だと交換用は新車用のおよそ1.7倍。", "交換用", "交換用", "こうかんよう", ["交換", "用"]],
+    ["日本だと交換用は新車用のおよそ1.7倍。", "新車用", "新車用", "しんしゃよう", ["新車", "用"]],
+    ["タイヤの売り先は大きく2つに分かれます。", "売り先", "売り先", "うりさき", ["売り", "先"]],
+    ["これは交換用です。", "交換用です", "交換用", "こうかんよう", ["交換", "用", "です"]]
+  ]) {
+    const tokens = await service.analyze(sentence);
+    const unit = tokens.find(t => t.surface === surface);
+    assert.ok(unit, tokens.map(t => t.surface).join(" / "));
+    assert.equal(sentence.slice(unit.start, unit.end), surface);
+    assert.equal(unit.baseReading, reading);
+    assert.deepEqual(Array.from(unit.parts, p => p.surface), parts);
+    const card = await service.lookup(surface, "en", sentence, { start: unit.start }, true);
+    assert.equal(card.japanese.lemma, lemma);
+    assert.equal(card.dictionaryHeadword, lemma);
+    if (lemma === "売り先") {
+      const component = await service.lookup("売り", "en", sentence, { groupStart: unit.start, groupSurface: surface, partIndex: 0 }, true);
+      assert.equal(component.japanese.lemma, "売る");
+    }
+  }
+  for (const sentence of ["交換の用", "交換、用がある", "売り 先", "売り、先に帰る"]) {
+    assert.ok(!(await service.analyze(sentence)).some(t => t.nounSuffix), sentence);
+  }
+});
+
 test("particles and auxiliary verbs explain their grammatical function", async () => {
   const { service } = harness();
   const particle = await service.lookup("から", "zh-CN", "気象衛星から見ていきます。");

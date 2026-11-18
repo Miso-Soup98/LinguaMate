@@ -78,15 +78,33 @@
     return shards.get(bucket);
   }
 
+  function attachNounSuffix(base, suffix) {
+    if (!base || base.end !== suffix.start || suffix.pos !== "名詞" || suffix.posDetail[0] !== "接尾") return null;
+    if (suffix.lemma !== "用" && suffix.lemma !== "先") return null;
+    const noun = base.pos === "名詞" && base.surface === base.lemma && base.isWordLike;
+    const verbStem = suffix.lemma === "先" && base.pos === "動詞" &&
+      base.parts.length === 1 && base.parts[0].form === "連用形";
+    if (!noun && !verbStem) return null;
+    // A stem contributes its surface (売り), not its verb lemma (売る).
+    // The suffix may carry a copula: 交換用です has the headword 交換用.
+    const surface = base.surface + suffix.surface;
+    const combined = { ...suffix, surface, text: surface, lemma: base.surface + suffix.lemma,
+      reading: base.reading && suffix.reading ? base.reading + suffix.reading : "",
+      baseReading: base.reading && suffix.baseReading ? base.reading + suffix.baseReading : "",
+      start: base.start, posDetail: ["一般"], parts: [...base.parts, ...suffix.parts],
+      known: base.known && suffix.known, compound: true, nounSuffix: suffix.lemma };
+    combined.termKey = lmJapanese.termKey(combined);
+    return combined;
+  }
+
   function joinCompounds(tokens, lexicon) {
-    if (!lexicon) return tokens;
     const output = [];
     const noun = (token) => token?.pos === "名詞" && /^[\p{Script=Han}々ヶヵ]+$/u.test(token.lemma);
     for (let i = 0; i < tokens.length; i += 1) {
       const first = tokens[i];
       let best = null;
       let form = first.lemma;
-      if (noun(first) && first.surface === first.lemma) {
+      if (lexicon && noun(first) && first.surface === first.lemma) {
         for (let j = i + 1; j < Math.min(tokens.length, i + 6); j += 1) {
           const last = tokens[j];
           if (!noun(last) || tokens[j - 1].end !== last.start || form.length + last.lemma.length > 16) break;
@@ -107,7 +125,10 @@
           if (last.surface !== last.lemma) break;
         }
       }
-      output.push(best ? best.token : first);
+      const unit = best ? best.token : first;
+      const combined = !best && attachNounSuffix(output[output.length - 1], unit);
+      if (combined) output[output.length - 1] = combined;
+      else output.push(unit);
       if (best) i = best.end;
     }
     return output;
@@ -245,6 +266,8 @@
 
   function grammarNotes(analysis) {
     const notes = [];
+    if (analysis.nounSuffix === "用") notes.push("接尾词「用（よう）」表示用途，如「交換用」指用来更换的。");
+    if (analysis.nounSuffix === "先") notes.push("接尾词「先（さき）」可指动作涉及的对象或去处，如「売り先」指卖给谁。");
     if (analysis.pos === "助詞") {
       const particles = {
         "から": "から：可表示起点（从……）、来源，也可接在句子后说明原因（因为……）。名词＋から不应和前面的名词当作一个词。",
@@ -326,6 +349,7 @@
       translationSource: definitions.length ? (/^en(?:-|$)/i.test(to) || !staged && !glosses[0] ? "词典原始英文释义" : "词典释义的机器翻译") : translated.text ? "在线翻译" : "",
       lookupNotice: !dict ? (translated.text ? "本地词典暂时无法载入；目前仅显示在线译文，可刷新页面后重试。" : "本地词典暂时无法载入，在线翻译也未返回结果，请刷新页面后重试。") : records.length ?
         (lexical.headword !== analysis.lemma ? `「${analysis.lemma}」参考「${lexical.headword}」的する用法。` : "") + "词典义项不等于本句含义。可对照原句译文，选择本句义项收藏；更多义项展开后翻译。" :
+        analysis.nounSuffix ? "词典未单列这个复合词。可点选组成部分，或展开「词形与语法」查看接尾词的用法。" :
         translated.text ? "未找到匹配词条；当前仅有机器译文，不代表它是正确的日语词。自动字幕可能识别错字或漏词，请结合整句核对，必要时校正原文。" : "未找到匹配词条，在线翻译暂不可用。请核对原字幕是否识别有误，也可划选完整词组查询。"
     };
   }
