@@ -113,13 +113,32 @@
     return output;
   }
 
+  function applyContextualReadings(tokens) {
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token.surface_form !== "後") continue;
+      const before = tokens[index - 1];
+      const after = tokens[index + 1];
+      // In a completed action followed by に／で, 「後」 means "afterward"
+      // and is read あと. Limit this override to the explicit past auxiliary
+      // pattern so other readings such as 後ほど／後ろ remain dictionary-led.
+      const followsPastPredicate = before?.pos === "助動詞" && /^(?:た|だ)$/.test(before.basic_form || before.surface_form);
+      const followedByPostposition = after?.pos === "助詞" && /^(?:に|で)$/.test(after.surface_form);
+      if (followsPastPredicate && followedByPostposition) {
+        token.reading = "アト";
+        token.basic_reading = "アト";
+      }
+    }
+    return tokens;
+  }
+
   async function analyze(text) {
     if (typeof text !== "string" || text.length > 12000) throw new Error("invalid_japanese_text");
     if (!text) return [];
     if (sentences.has(text)) return sentences.get(text);
     const pending = (async () => {
       const [analyzer, dict, lexicon] = await Promise.all([tokenizer(), dictionary().catch(() => null), compounds().catch(() => null)]);
-      const raw = analyzer.tokenize(text);
+      const raw = applyContextualReadings(analyzer.tokenize(text));
       for (const token of raw) {
         const lemma = token.basic_form;
         // Preserve the contextual reading of dictionary forms such as 生/なま.

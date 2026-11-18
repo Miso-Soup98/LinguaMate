@@ -49,6 +49,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 
 ### 日语学习（1.11.0）
 
+- 根据紧邻的活用和助词处理常见多音字：动词过去式「た／だ」＋「後」＋「に／で」读作 `あと`。只在这类明确结构中覆盖词典读音，不改动「後ろ」等其他词形（1.11.2）。
 - 将学习语言设为「日本語」。YouTube、Prime Video 和网页阅读会在本地按词典分词，把「食べませんでした」「食べちゃった」等完整活用链连接到「食べる」，保留字幕原文。
 - 日语词卡显示辞书形、字幕形式、假名、词性和活用。可能、被动、尊敬等不能仅凭形式确定的解释会列出候选，需结合原句判断。IPADIC 没有提供可靠原形关系的独立词条会保留原词，不强行还原。
 - 注音可选「全部」「仅未掌握」「悬停显示」「关闭」，设置后即时生效。默认仅未掌握；加入生词本不会自动视为已经掌握。
@@ -127,6 +128,7 @@ A Chrome extension for learning languages on YouTube and Amazon Prime Video with
 - Prime Video dictionary cards wait for a brief hover, so passing over words does not flash cards
 - Reloads captions when you turn the player's captions on or off
 - Japanese uses bundled offline morphology, dictionary forms, kana readings and optional furigana on both video platforms and in the page reader; explicit range lookup keeps a whole phrase together
+- Japanese furigana uses local context for a common homograph: a past verb followed by 「後に／後で」 reads 「あと」. The override is limited to that grammatical pattern and leaves forms such as 「後ろ」 unchanged (1.11.2)
 - Japanese vocabulary groups inflections by lemma and reading, preserves source examples, and supports meaning, reading and inflection-to-lemma review modes
 - Japanese definitions use 218,930 bundled JMdict entries, with full-dictionary supplements loaded in bounded shards. Exact written noun compounds, particles and auxiliary expressions receive additional support. Machine translations and ambiguous inflections are labelled separately. See [data sources and update procedure](THIRD_PARTY_NOTICES.md)
 - YouTube captions retain their original timing instead of merging into long paragraphs. Timed native/translated tracks load first; missing rows fall back to direct translation. Manually requested translations reveal progress and results even when automatic translation display is off, with explicit on/off controls (1.10.1)
