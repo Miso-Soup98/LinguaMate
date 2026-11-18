@@ -109,6 +109,23 @@ test("negative na-adjective and copula chains use the head's dictionary entry", 
   }
 });
 
+test("戦い in 戦い抜いた uses the fighting verb for both ruby and the contextual dictionary card", async () => {
+  const { service } = harness();
+  for (const sentence of ["で戦い抜いた会社", "戦い抜く", "最後まで戦い続けた。"]) {
+    const token = (await service.analyze(sentence)).find(t => t.surface === "戦い");
+    assert.equal(token.reading, "たたかい");
+    const card = await service.lookup("戦い", "en", sentence, { start: token.start }, true);
+    assert.equal(card.dictionaryHeadword, "戦う");
+    assert.equal(card.japanese.baseReading, "たたかう");
+    assert.equal(card.dictionaryMatched, true);
+  }
+  const grass = await service.analyze("草が風に戦いでいる。");
+  assert.equal(grass.find(t => t.lemma === "戦ぐ").parts[0].reading, "そよい");
+  const noun = (await service.analyze("戦いに勝つ。"))[0];
+  assert.equal(noun.pos, "名詞");
+  assert.equal(noun.lemma, "戦い");
+});
+
 test("dictionary matching respects headword-specific readings and sense restrictions", () => {
   const { service } = harness();
   const entry = { id: "fixture", k: ["甲", "乙"], r: [{ t: "こう", a: ["甲"] }, { t: "おつ", a: ["乙"] }],

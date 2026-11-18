@@ -137,9 +137,20 @@
   function applyContextualReadings(tokens) {
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
+      const after = tokens[index + 1];
+      // IPADIC can pick the sound-changed stem of 戦ぐ (そよぐ) here.
+      // These compound verbs take the regular stem of 戦う (たたかう).
+      if (token.surface_form === "戦い" && after?.pos === "動詞" &&
+          /^(抜く|抜ける|ぬく|ぬける|続ける|つづける|始める|終える)$/.test(after.basic_form)) {
+        Object.assign(token, {
+          basic_form: "戦う", reading: "タタカイ", pronunciation: "タタカイ", basic_reading: "タタカウ",
+          pos: "動詞", pos_detail_1: "自立", pos_detail_2: "*", pos_detail_3: "*",
+          conjugated_type: "五段・ワ行促音便", conjugated_form: "連用形"
+        });
+        continue;
+      }
       if (token.surface_form !== "後") continue;
       const before = tokens[index - 1];
-      const after = tokens[index + 1];
       // In a completed action followed by に／で, 「後」 means "afterward"
       // and is read あと. Limit this override to the explicit past auxiliary
       // pattern so other readings such as 後ほど／後ろ remain dictionary-led.
