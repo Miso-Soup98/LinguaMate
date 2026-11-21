@@ -162,6 +162,35 @@ y.state.cues=[{start:0,end:1800,text:'Current sentence'},{start:3000,end:4500,te
 v.currentTime=1.6;y.renderCurrent();y.onTick();v.currentTime=1.9;y.onTick();
 fixtureCheck('YouTube auto-pause stops at the actual subtitle end',v.fixturePaused===true);
 fixtureCheck('YouTube expired subtitle stays hidden after auto-pause',y.ui.learningLine.classList.contains('lm-hidden'));
+const player=document.querySelector('.html5-video-player'), fsWrap=player.parentElement;
+const fsChange=host=>{
+  player.style.width=host===player?'100vw':'';
+  player.style.height=host===player?'100vh':'';
+  Object.defineProperty(document,'fullscreenElement',{configurable:true,value:host});
+  document.dispatchEvent(new Event('fullscreenchange'));
+};
+const right=element=>element.getBoundingClientRect().right;
+const panelLeft=()=>y.ui.panel.getBoundingClientRect().left;
+y.state.settings.panelOpen=true;v.currentTime=.5;
+y.renderTranscript();y.renderCurrent();
+for (const host of [fsWrap, player]) {
+  fsChange(host);
+  fixtureCheck('Fullscreen sidebar reserves a separate column',y.ui.panel.parentElement===host&&Math.abs(right(v)-panelLeft())<1&&Math.abs(right(y.ui.panel)-innerWidth)<1);
+  fixtureCheck('Fullscreen video fits its column without cropping',getComputedStyle(v).objectFit==='contain');
+  fixtureCheck('Fullscreen subtitles and native controls stay in the video column',right(y.ui.learningLine)<=panelLeft()+1&&right(player.querySelector('.ytp-chrome-bottom'))<panelLeft());
+  await y.showDict(y.ui.panel.querySelector('.lm-word'));
+  fixtureCheck('Dictionary stays visible in the fullscreen layer',y.ui.dict.parentElement===host&&y.ui.bridge.parentElement===host);
+}
+y.state.settings.panelOpen=false;fsChange(player);
+fixtureCheck('Closing the sidebar releases the reserved width',!y.ui.panel.isConnected&&!player.classList.contains('lm-youtube-fullscreen-player'));
+y.state.settings.panelOpen=true;fsChange(fsWrap);
+y.state.settings.enabled=false;fsChange(fsWrap);
+fixtureCheck('Disabling the extension releases the reserved width',!fsWrap.classList.contains('lm-youtube-fullscreen')&&!player.classList.contains('lm-youtube-fullscreen-player'));
+y.state.settings.enabled=true;fsChange(fsWrap);
+fsChange(null);
+fixtureCheck('Exiting fullscreen restores the windowed layout',!fsWrap.classList.contains('lm-youtube-fullscreen')&&!player.classList.contains('lm-youtube-fullscreen-player')&&y.ui.panel.classList.contains('lm-docked')&&y.ui.panel.parentElement===document.documentElement);
+delete document.fullscreenElement;
+
 `;
 
 const primeCheck = String.raw`
@@ -208,7 +237,10 @@ for (const platform of ["youtube", "prime"]) {
       (async()=>{try{${checks}\n document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:true,checks:fixtureResults}))));}
       catch(error){document.title='LM_BROWSER_RESULT:'+btoa(unescape(encodeURIComponent(JSON.stringify({passed:false,error:error.stack,checks:fixtureResults}))));}})();`;
       const scripts = [bridge, source("src/background/service-worker.js"), ...["languages", "defaults", "frequency", "captions", "feedback", "japanese", "japanese-ui", "japanese-client", "vocab-button", "word-card", "dict-session", "prime-manifest", "prime-timeline"].map((name) => source(`src/shared/${name}.js`)), content, finish];
-      const html = `<!doctype html><meta charset="utf-8"><title>pending</title><style>body{margin:0;background:#111}video{display:block;width:800px;height:450px}${source("src/content/youtube.css")}${source("src/content/prime.css")}</style><div class="html5-video-player"><video></video></div>${scripts.map((script) => `<script>${script.replace(/<\/script/gi, "<\\/script")}</script>`).join("")}`;
+      const player = platform === "youtube"
+        ? '<div id="video-stage" style="position:relative;width:100vw;height:100vh"><div class="html5-video-player" style="position:relative"><div class="html5-video-container"><video style="width:800px;height:450px;left:50px"></video></div><div class="ytp-chrome-bottom" style="position:absolute;width:calc(100vw - 24px);left:12px;bottom:0"></div></div></div>'
+        : '<div class="html5-video-player"><video></video></div>';
+      const html = `<!doctype html><meta charset="utf-8"><title>pending</title><style>body{margin:0;background:#111}video{display:block;width:800px;height:450px}${source("src/content/youtube.css")}${source("src/content/prime.css")}</style>${player}${scripts.map((script) => `<script>${script.replace(/<\/script/gi, "<\\/script")}</script>`).join("")}`;
       const file = path.join(directory, `${platform}.html`);
       fs.writeFileSync(file, html, "utf8");
       const output = execFileSync(chrome, ["--headless", "--disable-gpu", "--no-first-run", "--disable-extensions", `--user-data-dir=${path.join(directory, "profile")}`, "--window-size=1280,900", "--virtual-time-budget=5000", "--dump-dom", pathToFileURL(file).href + "?v=fixture"], { encoding: "utf8", timeout: 35000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });

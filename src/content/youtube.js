@@ -332,9 +332,8 @@
     if (!currentVideoId()) {
       clearAudioReview();
       if (typeof lmYoutubeAudio !== "undefined") lmYoutubeAudio.stop();
-      invalidateJapaneseLines(ui.panel);
       invalidateJapaneseLines(ui.root);
-      ui.panel?.remove();
+      placePanel();
       ui.root?.remove();
       if (ui.phraseQuery) ui.phraseQuery.hidden = true;
       return;
@@ -345,7 +344,7 @@
       box.style.position = box.style.position || "relative";
       box.appendChild(ui.root);
     }
-    placePanel();
+    placePanel(box);
     syncToolbar();
     applyCaptionVisibility();
     watchCaptionButton();
@@ -404,23 +403,49 @@
     return overlapX > 24 && overlapY > 24;
   }
 
-  function placePanel() {
+  function placePanel(box) {
     if (!ui.panel) return;
-    ui.root?.classList.remove("lm-floating-panel");
-    if (!state.settings.panelOpen || !currentVideoId()) {
+    const watchPage = currentVideoId();
+    const open = watchPage && state.settings.enabled && state.settings.panelOpen;
+    const fullscreen = document.fullscreenElement;
+    const player = open && fullscreen ? box || playerBox() : null;
+    const host = player && fullscreen.contains(player) ? fullscreen : null;
+    const layoutChanged = ui.fullscreenHost !== host || ui.fullscreenPlayer !== (host ? player : null);
+
+    if (layoutChanged) {
+      ui.fullscreenHost?.classList.remove("lm-youtube-fullscreen");
+      ui.fullscreenPlayer?.classList.remove("lm-youtube-fullscreen-player");
+      host?.classList.add("lm-youtube-fullscreen");
+      if (host) player.classList.add("lm-youtube-fullscreen-player");
+      ui.fullscreenHost = host;
+      ui.fullscreenPlayer = host ? player : null;
+    }
+
+    if (!watchPage || !state.settings.panelOpen) {
       if (ui.panel.isConnected) invalidateJapaneseLines(ui.panel);
       ui.panel.remove();
-      return;
+    } else if (host) {
+      ui.panel.classList.remove("lm-in-column", "lm-docked");
+      if (ui.panel.parentElement !== host) host.appendChild(ui.panel);
+    } else {
+      const secondary = recommendationColumn() || (coversRecommendations() ? document.querySelector("ytd-watch-flexy:not([hidden]) #secondary") : null);
+      if (secondary) embedInColumn(secondary);
+      else {
+        ui.panel.classList.remove("lm-in-column");
+        ui.panel.classList.add("lm-docked");
+        const parent = fullscreen || document.documentElement;
+        if (ui.panel.parentElement !== parent) parent.appendChild(ui.panel);
+      }
     }
-    const secondary = recommendationColumn() || (coversRecommendations() ? document.querySelector("ytd-watch-flexy:not([hidden]) #secondary") : null);
-    if (secondary) {
-      embedInColumn(secondary);
-      return;
+
+    if (layoutChanged && fullscreen) {
+      // YouTube also caches the dimensions it writes to the video and controls.
+      window.dispatchEvent(new Event("resize"));
     }
-    ui.panel.classList.remove("lm-in-column", "lm-hidden");
-    ui.panel.classList.add("lm-docked");
-    const parent = document.fullscreenElement || document.documentElement;
-    if (!ui.panel.isConnected || ui.panel.parentElement !== parent) parent.appendChild(ui.panel);
+    if (dictOpen() && (layoutChanged || ui.dict.parentElement !== (fullscreen || document.documentElement))) {
+      if (hoverWord?.isConnected) placeDict(hoverWord);
+      else hideDict();
+    }
   }
 
   function syncToolbar() {
@@ -1688,9 +1713,8 @@
 
   function placeDict(anchor) {
     if (!anchor || !ui.dict) return;
-    if (ui.dict.parentElement !== document.documentElement) {
-      document.documentElement.appendChild(ui.dict);
-    }
+    const parent = document.fullscreenElement || document.documentElement;
+    if (ui.dict.parentElement !== parent) parent.appendChild(ui.dict);
     if (typeof lmPlaceDictionary === "function") {
       lmPlaceDictionary(ui.dict, anchor, { width: document.documentElement.clientWidth, height: window.innerHeight });
       placeBridge(anchor);
@@ -1716,9 +1740,8 @@
 
   function placeBridge(anchor) {
     if (!ui.bridge || !ui.dict || !anchor) return;
-    if (ui.bridge.parentElement !== document.documentElement) {
-      document.documentElement.appendChild(ui.bridge);
-    }
+    const parent = ui.dict.parentElement;
+    if (parent && ui.bridge.parentElement !== parent) parent.appendChild(ui.bridge);
     const word = anchor.getBoundingClientRect();
     const card = ui.dict.getBoundingClientRect();
     const pad = 16;
@@ -2025,6 +2048,8 @@
       const rect = range.getBoundingClientRect();
       ui.phraseQuery.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 300))}px`;
       ui.phraseQuery.style.top = `${Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 56))}px`;
+      const parent = document.fullscreenElement || document.documentElement;
+      if (ui.phraseQuery.parentElement !== parent) parent.appendChild(ui.phraseQuery);
       ui.phraseQuery.hidden = false;
       break;
     }
@@ -2105,6 +2130,10 @@
   document.addEventListener("yt-navigate-start", () => {
     clearAudioReview();
     if (typeof lmYoutubeAudio !== "undefined") lmYoutubeAudio.stop();
+  });
+  document.addEventListener("fullscreenchange", () => {
+    placePanel();
+    updatePhraseQuery();
   });
   document.addEventListener("yt-navigate-finish", () => { mountUi(); if (hasBooted) loadCaptions(); });
   document.addEventListener("yt-page-data-updated", () => mountUi());

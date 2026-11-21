@@ -446,6 +446,83 @@ html.lm-hide-yt-captions .caption-window {
   margin: 0;
 }
 
+/* The fullscreen element itself fills the viewport. Reserve the sidebar
+   width inside it so native fullscreen and the player's controls stay active. */
+.lm-youtube-fullscreen {
+  --lm-fullscreen-sidebar: min(42vw, clamp(260px, 24vw, 400px));
+}
+.lm-youtube-fullscreen > #lm-panel {
+  position: fixed;
+  inset: 0 0 0 auto;
+  box-sizing: border-box;
+  width: var(--lm-fullscreen-sidebar);
+  max-height: none;
+  z-index: 2147482000;
+  border: 0;
+  border-inline-start: 1px solid var(--lm-line);
+  border-radius: 0;
+  background: #121a24;
+  box-shadow: none;
+}
+.lm-youtube-fullscreen > #lm-panel .lm-panel-body {
+  flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+.lm-youtube-fullscreen > #lm-panel :is(.lm-panel-tabs, .lm-mini-help) {
+  flex: none;
+}
+.lm-youtube-fullscreen .lm-youtube-fullscreen-player {
+  width: calc(100% - var(--lm-fullscreen-sidebar)) !important;
+  height: 100% !important;
+}
+.lm-youtube-fullscreen-player .html5-video-container {
+  position: absolute !important;
+  inset: 0;
+}
+.lm-youtube-fullscreen-player .html5-video-container > video {
+  position: absolute;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
+.lm-youtube-fullscreen-player > #lm-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.lm-youtube-fullscreen-player > #lm-root .lm-toolbar {
+  pointer-events: auto;
+}
+/* YouTube writes viewport-based inline widths on its fullscreen controls. */
+.lm-youtube-fullscreen-player {
+  --lm-player-right: 0px;
+}
+.lm-youtube-fullscreen-player.lm-youtube-fullscreen {
+  --lm-player-right: var(--lm-fullscreen-sidebar);
+}
+.lm-youtube-fullscreen-player.lm-youtube-fullscreen .html5-video-container,
+.lm-youtube-fullscreen-player.lm-youtube-fullscreen > #lm-root {
+  right: var(--lm-player-right);
+}
+.lm-youtube-fullscreen-player :is(.ytp-chrome-top, .ytp-gradient-top, .ytp-gradient-bottom, .ytp-caption-window-container) {
+  width: calc(100% - var(--lm-player-right)) !important;
+}
+.lm-youtube-fullscreen-player .ytp-chrome-bottom {
+  width: auto !important;
+  right: calc(var(--lm-player-right) + 12px) !important;
+}
+.lm-youtube-fullscreen-player .ytp-progress-bar-container {
+  width: 100% !important;
+}
+.lm-youtube-fullscreen-player :is(.ytp-settings-menu, .ytp-contextmenu) {
+  max-width: calc(100% - var(--lm-player-right) - 16px);
+}
+.lm-youtube-fullscreen-player.lm-youtube-fullscreen .ytp-settings-menu {
+  margin-right: var(--lm-fullscreen-sidebar);
+}
+
 .lm-mini-help {
   font-size: 11px;
   color: var(--lm-muted);
