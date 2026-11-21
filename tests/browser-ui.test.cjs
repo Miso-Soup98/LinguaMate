@@ -189,6 +189,39 @@ fixtureCheck('Disabling the extension releases the reserved width',!fsWrap.class
 y.state.settings.enabled=true;fsChange(fsWrap);
 fsChange(null);
 fixtureCheck('Exiting fullscreen restores the windowed layout',!fsWrap.classList.contains('lm-youtube-fullscreen')&&!player.classList.contains('lm-youtube-fullscreen-player')&&y.ui.panel.classList.contains('lm-docked')&&y.ui.panel.parentElement===document.documentElement);
+const transcript=y.ui.panelBody;
+const returnButton=y.ui.panel.querySelector('#lm-return-current');
+const cueRow=index=>transcript.querySelector('[data-index="'+index+'"]');
+function readingPosition() {
+  const top=transcript.getBoundingClientRect().top;
+  const first=[...transcript.querySelectorAll('.lm-cue')].find(row=>row.getBoundingClientRect().bottom>top);
+  return [first.dataset.index,Math.round(first.getBoundingClientRect().top-top)];
+}
+const cueVisible=index=>{
+  const row=cueRow(index).getBoundingClientRect(), box=transcript.getBoundingClientRect();
+  return row.top>=box.top-1&&row.bottom<=box.bottom+1;
+};
+y.state.cues=Array.from({length:160},(_,i)=>({start:i*2000,end:i*2000+1750,text:'Caption '+i+' with enough words to wrap differently when the sidebar changes width.'}));
+y.state.nativeCues=[];v.currentTime=201;y.renderTranscript();y.renderCurrent();
+fixtureCheck('Transcript follows the cue well beyond the opening rows',cueVisible(100)&&transcript.scrollTop>0);
+fsChange(player);
+fixtureCheck('Entering fullscreen keeps the playing cue visible',cueVisible(100));
+transcript.scrollTop=cueRow(42).getBoundingClientRect().top-transcript.getBoundingClientRect().top+transcript.scrollTop+8;
+transcript.dispatchEvent(new Event('scroll'));
+const reading=readingPosition();
+v.currentTime=221;y.onTick();
+fixtureCheck('Playback highlights newer captions without moving a manually scrolled list',!y.state.followTranscript&&cueRow(110).classList.contains('active')&&String(readingPosition())===String(reading));
+fsChange(null);
+const restored=readingPosition();
+fixtureCheck('Exiting fullscreen preserves the visible row and its offset',restored[0]===reading[0]&&Math.abs(restored[1]-reading[1])<=1);
+returnButton.click();
+fixtureCheck('Return to current scrolls without seeking and restores follow',cueVisible(110)&&v.currentTime===221&&y.state.followTranscript);
+v.currentTime=281;y.onTick();
+fixtureCheck('Returning to current keeps following subsequent cues',cueVisible(140));
+v.currentTime=281.9;returnButton.click();
+fixtureCheck('Return to current during a subtitle gap reveals the last cue without seeking',cueVisible(140)&&v.currentTime===281.9);
+y.ui.panel.querySelector('[data-tab="words"]').click();
+fixtureCheck('Return to current is specific to the transcript tab',returnButton.parentElement.hidden);
 delete document.fullscreenElement;
 
 `;

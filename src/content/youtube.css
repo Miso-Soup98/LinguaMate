@@ -366,6 +366,29 @@ html.lm-hide-yt-captions .caption-window {
   min-height: 240px;
 }
 
+#lm-panel > .lm-panel-body {
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+.lm-transcript-tools {
+  flex: none;
+  padding: 7px 10px;
+  border-top: 1px solid var(--lm-line);
+}
+#lm-return-current {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--lm-line);
+  border-radius: 8px;
+  background: rgba(45, 212, 191, 0.1);
+  color: var(--lm-accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+#lm-return-current:hover { background: rgba(45, 212, 191, 0.18); }
+
 .lm-cue {
   display: block;
   box-sizing: border-box;
@@ -464,11 +487,7 @@ html.lm-hide-yt-captions .caption-window {
   background: #121a24;
   box-shadow: none;
 }
-.lm-youtube-fullscreen > #lm-panel .lm-panel-body {
-  flex: 1;
-  min-height: 0;
-  overscroll-behavior: contain;
-}
+.lm-youtube-fullscreen > #lm-panel .lm-panel-body { flex: 1; }
 .lm-youtube-fullscreen > #lm-panel :is(.lm-panel-tabs, .lm-mini-help) {
   flex: none;
 }

@@ -15,6 +15,7 @@
     vocab: [],
     known: {},
     tab: "subs",
+    followTranscript: true,
     peeking: false,
     holdTimer: null,
     lastAutoPause: -1,
@@ -257,11 +258,22 @@
         <button data-tab="words">生词</button>
         <button data-tab="learn">学习</button>
       </div>
-      <div class="lm-panel-body" id="lm-panel-body"></div>
+      <div class="lm-panel-body" id="lm-panel-body" tabindex="0" aria-label="侧栏列表"></div>
+      <div class="lm-transcript-tools" hidden>
+        <button type="button" id="lm-return-current">回到当前字幕</button>
+      </div>
       <div class="lm-mini-help">悬停查词 · 右键收藏 · A 上一句 · S 重播 · D 下一句</div>
     `;
     ui.panel = panel;
     ui.panelBody = $("#lm-panel-body", panel);
+    ui.transcriptTools = $(".lm-transcript-tools", panel);
+    $("#lm-return-current", panel).addEventListener("click", returnToCurrentCue);
+    ui.panelBody.addEventListener("scroll", onTranscriptScroll);
+    ui.panelBody.addEventListener("wheel", (event) => {
+      if (event.deltaY && !event.ctrlKey && state.tab === "subs" && ui.panelBody.scrollHeight > ui.panelBody.clientHeight) {
+        state.followTranscript = false;
+      }
+    }, { passive: true });
     for (const surface of [ui.subs, panel, ui.dict, ui.bridge]) {
       surface.addEventListener("mouseover", onWordHover);
       surface.addEventListener("mouseout", onWordLeave);
@@ -412,6 +424,14 @@
     const host = player && fullscreen.contains(player) ? fullscreen : null;
     const layoutChanged = ui.fullscreenHost !== host || ui.fullscreenPlayer !== (host ? player : null);
 
+    const mounted = watchPage && state.settings.panelOpen;
+    const secondary = mounted && !fullscreen
+      ? recommendationColumn() || (coversRecommendations() ? document.querySelector("ytd-watch-flexy:not([hidden]) #secondary") : null)
+      : null;
+    const parent = mounted ? host || secondary || fullscreen || document.documentElement : null;
+    const moved = layoutChanged || ui.panel.parentElement !== parent;
+    const position = moved ? ui.transcriptPosition || transcriptPosition() : null;
+
     if (layoutChanged) {
       ui.fullscreenHost?.classList.remove("lm-youtube-fullscreen");
       ui.fullscreenPlayer?.classList.remove("lm-youtube-fullscreen-player");
@@ -421,23 +441,22 @@
       ui.fullscreenPlayer = host ? player : null;
     }
 
-    if (!watchPage || !state.settings.panelOpen) {
+    if (!parent) {
       if (ui.panel.isConnected) invalidateJapaneseLines(ui.panel);
       ui.panel.remove();
-    } else if (host) {
-      ui.panel.classList.remove("lm-in-column", "lm-docked");
-      if (ui.panel.parentElement !== host) host.appendChild(ui.panel);
+    } else if (secondary) {
+      embedInColumn(secondary);
     } else {
-      const secondary = recommendationColumn() || (coversRecommendations() ? document.querySelector("ytd-watch-flexy:not([hidden]) #secondary") : null);
-      if (secondary) embedInColumn(secondary);
-      else {
-        ui.panel.classList.remove("lm-in-column");
-        ui.panel.classList.add("lm-docked");
-        const parent = fullscreen || document.documentElement;
-        if (ui.panel.parentElement !== parent) parent.appendChild(ui.panel);
-      }
+      ui.panel.classList.remove("lm-in-column");
+      ui.panel.classList.toggle("lm-docked", !host);
+      if (ui.panel.parentElement !== parent) parent.appendChild(ui.panel);
     }
 
+    ui.panelFullscreen = fullscreen;
+    if (moved && parent && position) {
+      restoreTranscriptPosition(position);
+      if (state.followTranscript) revealTranscriptCue(state.activeIndex);
+    }
     if (layoutChanged && fullscreen) {
       // YouTube also caches the dimensions it writes to the video and controls.
       window.dispatchEvent(new Event("resize"));
@@ -751,6 +770,10 @@
   }
 
   async function performCaptionLoad(force, videoId, key) {
+    if (state.videoId !== videoId) {
+      state.followTranscript = true;
+      ui.transcriptPosition = null;
+    }
     if (state.captionKey !== key) {
       clearAudioReview();
       if (typeof lmYoutubeAudio !== "undefined") lmYoutubeAudio.stop();
@@ -1190,24 +1213,84 @@
     if (state.tab === "subs") highlightTranscript(idx);
   }
 
+  function transcriptPosition() {
+    const body = ui.panelBody;
+    if (!body?.clientHeight || state.tab !== "subs") return null;
+    const rows = body.getElementsByClassName("lm-cue");
+    const top = body.getBoundingClientRect().top;
+    let low = 0, high = rows.length;
+    // Rows are stacked vertically. Find the first visible one without measuring
+    // every intervening row when a long transcript scrolls.
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (rows[mid].getBoundingClientRect().bottom <= top) low = mid + 1;
+      else high = mid;
+    }
+    const row = rows[low];
+    return { scrollTop: body.scrollTop, index: row?.dataset.index, offset: row ? row.getBoundingClientRect().top - top : 0 };
+  }
+
+  function restoreTranscriptPosition(position) {
+    const body = ui.panelBody;
+    if (!body?.clientHeight || state.tab !== "subs") return;
+    const row = position?.scrollTop > 0 ? body.querySelector('.lm-cue[data-index="' + position.index + '"]') : null;
+    if (row) body.scrollTop += row.getBoundingClientRect().top - body.getBoundingClientRect().top - position.offset;
+    else body.scrollTop = position?.scrollTop || 0;
+    ui.transcriptPosition = transcriptPosition();
+  }
+
+  function onTranscriptScroll() {
+    // Fullscreen can clamp the scroller before fullscreenchange moves the panel.
+    if (document.fullscreenElement !== (ui.panelFullscreen ?? null)) return;
+    const position = transcriptPosition();
+    if (!position) return;
+    const previous = ui.transcriptPosition;
+    if (previous && Math.abs(position.scrollTop - previous.scrollTop) > 1 &&
+        (previous.index !== position.index || Math.abs(position.offset - previous.offset) > 2)) {
+      state.followTranscript = false;
+    }
+    ui.transcriptPosition = position;
+  }
+
+  function revealTranscriptCue(index, center = false) {
+    const body = ui.panelBody;
+    if (!body?.clientHeight || state.tab !== "subs" || index < 0) return;
+    const cue = body.querySelector('.lm-cue[data-index="' + index + '"]');
+    if (!cue) return;
+    const bounds = body.getBoundingClientRect();
+    const row = cue.getBoundingClientRect();
+    if (center || row.top < bounds.top || row.bottom > bounds.bottom) {
+      body.scrollTop += row.top - bounds.top - Math.max(0, (body.clientHeight - row.height) / 2);
+      ui.transcriptPosition = transcriptPosition();
+    }
+  }
+
+  function returnToCurrentCue() {
+    const video = videoEl();
+    if (!video || !state.cues.length) return;
+    state.followTranscript = true;
+    const time = video.currentTime * 1000;
+    const index = currentIndex(time);
+    revealTranscriptCue(index >= 0 ? index : Math.max(0, navigationIndex(time)), true);
+  }
+
   function highlightTranscript(idx) {
     if (!ui.panelBody) return;
-    ui.panelBody.querySelectorAll(".lm-cue").forEach((el, i) => {
-      el.classList.toggle("active", i === idx);
-    });
     const active = ui.panelBody.querySelector(".lm-cue.active");
-    if (active && state.settings.autoPause === false) {
-      const box = ui.panelBody.getBoundingClientRect();
-      const row = active.getBoundingClientRect();
-      if (row.top < box.top || row.bottom > box.bottom) {
-        active.scrollIntoView({ block: "center" });
-      }
+    const current = idx >= 0 ? ui.panelBody.querySelector('.lm-cue[data-index="' + idx + '"]') : null;
+    if (active !== current) {
+      active?.classList.remove("active");
+      current?.classList.add("active");
     }
+    if (current && state.followTranscript) revealTranscriptCue(idx);
   }
 
   function renderPanel() {
     if (!ui.panel) return;
-    if (state.tab !== "subs") translationObserver?.disconnect();
+    if (state.tab !== "subs") {
+      translationObserver?.disconnect();
+      ui.transcriptTools.hidden = true;
+    }
     ui.panel.querySelectorAll("[data-tab]").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.tab === state.tab);
     });
@@ -1219,6 +1302,7 @@
   function renderTranscript() {
     invalidateJapaneseLines(ui.panelBody);
     translationObserver?.disconnect();
+    ui.transcriptTools.hidden = !state.cues.length || state.status === "loading" || state.status === "fetching";
     if (state.status === "loading" || state.status === "fetching") {
       ui.panelBody.innerHTML = `<div class="lm-empty">正在读取字幕…</div>`;
       return;
@@ -1228,7 +1312,7 @@
       ui.panelBody.querySelector("#lm-retry").addEventListener("click", () => loadCaptions(true));
       return;
     }
-    const scroll = ui.panelBody.scrollTop;
+    const position = ui.transcriptPosition;
     const fragment = document.createDocumentFragment();
     const japanese = /^ja(?:-|$)/i.test(state.learningTrack?.languageCode || state.settings.learningLang);
     if (japanese) {
@@ -1328,7 +1412,8 @@
     });
     ui.panelBody.replaceChildren(fragment);
     if (hoverWord && !hoverWord.isConnected) hideDict();
-    ui.panelBody.scrollTop = scroll;
+    restoreTranscriptPosition(position);
+    if (state.followTranscript) revealTranscriptCue(state.activeIndex);
     observeVisibleTranslations();
   }
 
