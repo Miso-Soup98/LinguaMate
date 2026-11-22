@@ -146,6 +146,11 @@ async function handleMessage(message) {
       return { ok: true, tokens: await lmJapaneseService.audioReadings(message.text, message.kana) };
     case "LM_JA_ANALYZE":
       return { ok: true, tokens: await lmJapaneseService.analyze(message.text) };
+    case "LM_JA_RECORDING": {
+      const url = await lmJapaneseService.recordingUrl(message.word, message.kana);
+      if (!url) return { ok: true, audio: "" };
+      return { ok: true, ...await audioToBase64(url, { signal: AbortSignal.timeout(5000), credentials: "omit" }) };
+    }
     case "LM_PRONOUNCE": {
       const clip = await pronounceClip(message.text, message.tl, message.audioUrl);
       return { ok: true, audio: clip.audio || "", mime: clip.mime || "audio/mpeg" };
@@ -1004,8 +1009,8 @@ async function pronounceClip(text, tl, audioUrl) {
   return audioToBase64(url);
 }
 
-async function audioToBase64(url) {
-  const res = await fetch(url);
+async function audioToBase64(url, options) {
+  const res = await fetch(url, options);
   if (!res.ok) return { audio: "", mime: "audio/mpeg" };
   const bytes = new Uint8Array(await res.arrayBuffer());
   if (!bytes.length || bytes.length > 250000) return { audio: "", mime: "audio/mpeg" };

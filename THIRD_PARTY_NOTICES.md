@@ -49,3 +49,11 @@ The YouTube audio worker bundles the browser distributions of [Transformers.js 3
 - [ONNX Runtime licence](src/vendor/audio-asr/LICENSE-onnxruntime.txt) and [third-party notices](src/vendor/audio-asr/ThirdPartyNotices-onnxruntime.txt)
 
 Model data downloads on demand from the pinned [Xenova/whisper-base snapshot](https://huggingface.co/Xenova/whisper-base/tree/64da57285918e20ea79ea5c88eed7197933abaa8) for Japanese transcription and [shrippen/kaiwa-kana-ctc snapshot](https://huggingface.co/shrippen/kaiwa-kana-ctc/tree/99dd836ea672ee18abc88c7d6bb54fbbd187835b) for kana recognition. These models run locally.
+
+## Japanese pitch accent and recordings
+
+The [Kanjium](https://github.com/mifunetoshiro/kanjium) pitch-accent data was provided by Uros O. through his free database. LinguaMate normalizes the writing and reading keys and indexes the documented Tokyo pitch values for dictionary forms under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+
+Recordings are sourced from the [Tofugu and WaniKani pronunciation collection](https://github.com/tofugu/japanese-vocabulary-pronunciation-audio), also under CC BY-SA 4.0. LinguaMate requests the original unmodified recording from the pinned upstream revision when the learner clicks the recording button. The collection includes native speakers from Tokyo and Kansai. The pitch chart represents the dictionary's Tokyo pattern.
+
+The [pronunciation index provenance](src/vendor/japanese-pronunciation/SOURCE.json) contains the pinned inputs and source checksum. Rebuild it with `python tools/vendor_japanese_pronunciation.py`.

@@ -151,6 +151,34 @@ html.lm-hide-yt-captions .caption-window {
 .lm-cue-native[data-japanese-state] { line-height: 1.8; }
 .lm-ja-word[data-furigana="hover"]:hover rt,
 .lm-ja-word[data-furigana="hover"]:focus-within rt { visibility: visible; }
+.lm-ja-pronunciation [data-ja-original] { font-size: 12px; }
+.lm-ja-audio-credit, .lm-ja-audio-status, .lm-pitch {
+  font-size: 12px;
+  color: var(--lm-muted);
+}
+.lm-ja-audio-credit a, .lm-pitch a { color: var(--lm-muted); text-decoration: underline; }
+.lm-ja-audio-status:not(:empty), .lm-ja-audio-credit { margin-top: 4px; }
+.lm-pitch { margin: 8px 0; }
+.lm-pitch > div:first-child a { margin-inline-start: 5px; }
+.lm-pitch-pattern { display: flex; align-items: center; gap: 8px; margin-top: 5px; overflow-x: auto; }
+.lm-pitch-pattern b { color: var(--lm-accent); }
+.lm-pitch-contour { display: inline-flex; }
+.lm-pitch-beat {
+  position: relative;
+  padding: 2px 4px;
+  min-width: 1.1em;
+  text-align: center;
+  color: var(--lm-text);
+}
+.lm-pitch-beat:last-child { color: var(--lm-muted); font-size: 10px; }
+.lm-pitch-high { border-top: 2px solid var(--lm-accent); border-bottom: 2px solid transparent; }
+.lm-pitch-low { border-bottom: 2px solid var(--lm-accent); border-top: 2px solid transparent; }
+.lm-pitch-rise::after, .lm-pitch-drop::after {
+  content: "";
+  position: absolute;
+  inset: 0 -1px 0 auto;
+  border-right: 2px solid var(--lm-accent);
+}
 .lm-ja-analysis { margin-top: 10px; font-size: 13px; line-height: 1.6; }
 .lm-ja-analysis dl { margin: 0; }
 .lm-ja-detail { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 8px; }

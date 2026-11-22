@@ -193,8 +193,19 @@
     return result;
   }
 
+  function moras(value) {
+    const hiragana = kana(value);
+    if (!/^[ぁ-ゖー]+$/u.test(hiragana)) return [];
+    const result = [];
+    for (const character of hiragana) {
+      if (result.length && /[ぁぃぅぇぉゃゅょゎ]/u.test(character)) result[result.length - 1] += character;
+      else result.push(character);
+    }
+    return result;
+  }
+
   globalThis.lmJapanese = Object.freeze({
-    analyzeTokens, termKey, baseReading, toHiragana: kana, isJapanese: japanese,
+    analyzeTokens, termKey, moras, baseReading, toHiragana: kana, isJapanese: japanese,
     lookupForm: (value) => normalized(typeof value === "string" ? value : value && (value.lemma || value.surface || value.text)),
     conjugationLabel: (value) => value && value.conjugation ? value.conjugation.labels.join(" · ") : ""
   });

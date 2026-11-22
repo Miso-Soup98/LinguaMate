@@ -50,11 +50,15 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
         }
         if(message.type==='LM_LOOKUP'){
           const japanese=message.from==='ja'?(message.isPhrase?{surface:message.word,lemma:message.word,pos:'短语 / 选区',isPhrase:true}:({...message.japanese,entryId:'10001'})):undefined;
-          const reply={ok:true,result:{word:message.word,translation:'测试释义',japanese,entries:[],dictionarySource:'JMdict / EDRDG',dictionaryDate:'2026-10-19',translationSource:'在线翻译',lookupNotice:'可能义项请结合语境判断'}};
+          const reply={ok:true,result:{word:message.word,translation:'测试释义',japanese,entries:[],pronunciation:window.fixtureShowPitch?{word:'食べる',kana:'たべる',pitch:[2],speechText:'食べる',nativeRecording:true}:null,dictionarySource:'JMdict / EDRDG' ,dictionaryDate:'2026-10-19',translationSource:'在线翻译',lookupNotice:'可能义项请结合语境判断'}};
           if(window.fixturePauseLookup){window.fixtureResumeLookup=()=>callback(reply);return;}
           return callback(reply);
         }
-        if(message.type==='LM_PRONOUNCE')return callback({ok:true,audio:''});
+        if(message.type==='LM_JA_RECORDING') {
+          if (window.fixtureHoldRecording) { window.fixtureReleaseRecording=()=>callback({ok:true,audio:'AA=='});return; }
+          return callback({ok:true,audio:window.fixtureRecordingUnavailable?'':'AA=='});
+        }
+        if(message.type==='LM_PRONOUNCE')return callback({ok:true,audio:window.fixtureRecordingUnavailable?'AA==':''});
         handleMessage(message).then(callback,error=>callback({ok:false,error:String(error.message)}));
       }},storage:{sync:area('sync'),local:area('local'),onChanged:{addListener(){}}},contextMenus:{onClicked:{addListener(){}}}};
     `;
@@ -90,6 +94,26 @@ test("YouTube Japanese subtitle, lookup, identity, selection, statistics and set
       fixtureCheck('Another inflection opens the same saved record',y.ui.dict.querySelector('.lm-dict-save').getAttribute('aria-pressed')==='true');
       y.ui.dict.querySelector('.lm-dict-save').click();await y.ui.vocabButton.pending;
       fixtureCheck('Clicking the saved inflection removes the original entry',fixtureData.local.vocab.length===0&&!words[0].classList.contains('lm-saved'));
+      window.fixtureShowPitch=true;
+      const oldAudio=window.Audio, clipPlayers=[];
+      window.Audio=class { play(){clipPlayers.push(this);return Promise.resolve();} pause(){} };
+      const opensWithPitch=()=>y.showDict(words[0],{surface:'食べた',context:'私が食べた',lang:'ja'});
+      await opensWithPitch();
+      const pitch=y.ui.dict.querySelector('.lm-pitch-pattern');
+      fixtureCheck('Pitch diagrams are labeled as dictionary-form patterns',pitch.querySelector('b').textContent==='[2]'&&pitch.querySelector('.lm-pitch-contour').getAttribute('aria-label').includes('べ高、る低'));
+      const clicksBefore=fixtureMessages.filter(m=>m.type==='LM_PRONOUNCE').length;
+      y.ui.dict.querySelector('[data-accent="read"]').click();await settleFixture();
+      const recorded=fixtureMessages.filter(m=>m.type==='LM_JA_RECORDING').at(-1);
+      fixtureCheck('Playback selects the original recording by lemma and kana',recorded.word==='食べる'&&recorded.kana==='たべる'&&clipPlayers.length===1&&fixtureMessages.filter(m=>m.type==='LM_PRONOUNCE').length===clicksBefore);
+      window.fixtureHoldRecording=true;
+      y.ui.dict.querySelector('[data-accent="read"]').click();await settleFixture();y.hideDict();
+      fixtureReleaseRecording();await settleFixture();window.fixtureHoldRecording=false;
+      fixtureCheck('A closed word card cannot start a delayed recording',clipPlayers.length===1);
+      window.fixtureRecordingUnavailable=true;await opensWithPitch();
+      y.ui.dict.querySelector('[data-accent="read"]').click();await settleFixture();
+      fixtureCheck('Unavailable recordings fall back to labeled synthesis with an unambiguous written form',y.ui.dict.querySelector('.lm-ja-audio-status').textContent.includes('合成朗读')&&fixtureMessages.filter(m=>m.type==='LM_PRONOUNCE').at(-1).text==='食べる');
+      fixtureCheck('Word cards can replay their source video cue',!!y.ui.dict.querySelector('[data-ja-original]'));
+      window.Audio=oldAudio;window.fixtureShowPitch=false;window.fixtureRecordingUnavailable=false;
       y.hideDict();
       y.state.settings.japaneseFurigana='off';y.renderCurrent();await settleFixture();
       fixtureCheck('Furigana setting applies to current subtitle immediately',!y.ui.learningLine.querySelector('rt'));

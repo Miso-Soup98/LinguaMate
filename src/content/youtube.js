@@ -1682,7 +1682,10 @@
 
   function renderDict(data, cue, from, sourceAnalysis = null, selected = null) {
     const english = String(from || "").toLowerCase().startsWith("en");
-    const japanese = from === "ja" ? data.japanese || sourceAnalysis : null;
+    const japanese = /^ja(?:-|$)/i.test(from) ? data.japanese || sourceAnalysis : null;
+    const japaneseAudio = japanese && typeof lmJapaneseUi !== "undefined";
+    const hasOriginal = Number.isFinite(cue?.start);
+    const audioToken = state.dictToken;
     const savedWord = japanese?.lemma || data.word;
     const detailed = (english || japanese) && typeof lmWordCard !== "undefined";
     const accent = state.settings.accent === "uk" ? "uk" : "us";
@@ -1707,7 +1710,7 @@
       : `<div class="lm-dict-senses">${(data.senses || [])
           .map((sense) => `${escapeHtml(sense.pos)}：${escapeHtml((sense.words || []).join("、"))}`)
           .join("<br>") || escapeHtml(data.translation || "暂无释义")}</div>`;
-    const accents = english
+    const accents = japaneseAudio ? lmJapaneseUi.pronunciationHtml(japanese, data.pronunciation, hasOriginal) : english
       ? `<div class="lm-accents">
           <button data-accent="us" class="${accent === "us" ? "active" : ""}">美式 US<span class="lm-ipa">${escapeHtml(data.phoneticUs || data.phonetic || "")}</span></button>
           <button data-accent="uk" class="${accent === "uk" ? "active" : ""}">英式 UK<span class="lm-ipa">${escapeHtml(data.phoneticUk || data.phonetic || "")}</span></button>
@@ -1732,7 +1735,12 @@
       const hint = index < 0 ? null : { partIndex: index, groupStart: group.start, groupSurface: group.surface, groupAudioReading: group.audioReading ? group.reading : undefined };
       showDict(hoverWord, hint ? { surface: group.parts[index].surface, context: cue?.text, group, hint } : null);
     });
-    ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
+    if (japaneseAudio) lmJapaneseUi.bindPronunciation(ui.dict, {
+      analysis: japanese, data: data.pronunciation, word: data.word, send,
+      isCurrent: () => audioToken === state.dictToken,
+      replay: hasOriginal ? () => seekTo(cue.start, true) : null
+    });
+    else ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
       button.addEventListener("click", async () => {
         const chosen = button.dataset.accent === "uk" ? "uk" : "us";
         if (button.dataset.accent !== "read") {
@@ -1869,6 +1877,7 @@
     hoverWord = null;
     state.dictToken += 1;
     stopSpeech();
+    if (typeof lmJapaneseUi !== "undefined") lmJapaneseUi.stopPronunciation();
     if (ui.dict) ui.dict.classList.add("lm-hidden");
     if (ui.bridge) ui.bridge.classList.add("lm-hidden");
   }
@@ -1922,6 +1931,7 @@
 
   async function showDict(wordEl, selected = null, previewOnHover = false) {
     if (!wordEl || !wordEl.isConnected) return;
+    if (typeof lmJapaneseUi !== "undefined") lmJapaneseUi.stopPronunciation();
     clearTimeout(hoverTimer); clearTimeout(hideTimer); pendingHoverWord = null;
     hoverWord?.classList.remove("lm-word-active");
     hoverWord = wordEl;

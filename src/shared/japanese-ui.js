@@ -135,6 +135,115 @@ var lmJapaneseUi = (() => {
     return rows.length || alternatives || grammar ? `<section class="lm-ja-analysis" lang="ja"><dl>${rows.join("")}</dl>${grammar}${alternatives}${note}</section>` : "";
   }
 
+  function pronunciationHtml(analysis, data, hasCue) {
+    const beats = typeof lmJapanese !== "undefined" ? lmJapanese.moras(data?.kana) : [];
+    const pitch = Array.isArray(data?.pitch) ? data.pitch.filter(n => Number.isInteger(n) && n >= 0 && n <= beats.length) : [];
+    const diagrams = pitch.map(number => {
+      const high = beats.map((_, i) => number === 1 ? i === 0 : i > 0 && (number === 0 || i < number));
+      const tail = number === 0;
+      const heights = [...high, tail];
+      const contour = [...beats, "＋助词"].map((beat, i) => {
+        const transition = heights[i] === heights[i + 1] || i === beats.length ? "" : heights[i] ? " lm-pitch-drop" : " lm-pitch-rise";
+        return `<span class="lm-pitch-beat ${heights[i] ? "lm-pitch-high" : "lm-pitch-low"}${transition}">${escape(beat)}</span>`;
+      }).join("");
+      return `<div class="lm-pitch-pattern"><b>[${number}]</b><span class="lm-pitch-contour" role="img" aria-label="${escape(beats.map((beat, i) => beat + (high[i] ? "高" : "低")).join("、") + (tail ? "，后接助词高" : "，后接助词低"))}">${contour}</span></div>`;
+    }).join("");
+    const source = data?.nativeRecording
+      ? '<a target="_blank" rel="noopener noreferrer" href="https://github.com/tofugu/japanese-vocabulary-pronunciation-audio">Tofugu / WaniKani · CC BY-SA 4.0</a>'
+      : "";
+    const kana = data?.kana || analysis?.baseReading;
+    return `<section class="lm-ja-pronunciation">
+      <div class="lm-accents">
+        <button type="button" data-accent="read">${source ? "真人录音" : "合成朗读"}${kana ? `<span class="lm-ipa" lang="ja">${escape(kana)}</span>` : ""}</button>
+        ${hasCue ? '<button type="button" data-ja-original>回听视频原句</button>' : ""}
+      </div>
+      <div class="lm-ja-audio-status" role="status"></div>
+      ${source ? `<div class="lm-ja-audio-credit">${source}</div>` : ""}
+      ${diagrams ? `<div class="lm-pitch" title="数字表示在哪一拍后降调，0 表示后接助词也不降">
+        <div>东京式辞书形重音 <a target="_blank" rel="noopener noreferrer" href="https://github.com/mifunetoshiro/kanjium">Kanjium</a></div>
+        ${diagrams}
+      </div>` : ""}
+    </section>`;
+  }
+
+  let speechVersion = 0;
+  let disposeSpeech;
+  function stopPronunciation() {
+    speechVersion++;
+    disposeSpeech?.();
+    disposeSpeech = null;
+  }
+
+  function bindPronunciation(container, { analysis, data, word, send, isCurrent, replay }) {
+    const root = container.querySelector(".lm-ja-pronunciation");
+    if (!root) return;
+    const status = root.querySelector(".lm-ja-audio-status");
+    root.querySelector("[data-ja-original]")?.addEventListener("click", () => {
+      stopPronunciation();
+      status.textContent = "";
+      replay?.();
+    });
+    root.querySelector('[data-accent="read"]').addEventListener("click", async () => {
+      stopPronunciation();
+      const version = speechVersion;
+      const active = () => version === speechVersion && root.isConnected && isCurrent();
+      const spoken = data?.speechText || analysis?.baseReading || analysis?.lemma || word;
+      async function play(clip) {
+        if (!clip?.audio || !active()) return false;
+        let url, player;
+        try {
+          const bytes = Uint8Array.from(atob(clip.audio), char => char.charCodeAt(0));
+          url = URL.createObjectURL(new Blob([bytes], { type: clip.mime || "audio/mpeg" }));
+          player = new Audio(url);
+          const release = () => {
+            URL.revokeObjectURL(url);
+            if (disposeSpeech === stop) disposeSpeech = null;
+          };
+          const stop = () => { player.pause(); release(); };
+          disposeSpeech = stop;
+          player.onended = release;
+          player.onerror = release;
+          await player.play();
+          return active();
+        } catch (_) {
+          if (url) URL.revokeObjectURL(url);
+          return false;
+        }
+      }
+      if (data?.nativeRecording) {
+        status.textContent = "正在加载真人录音…";
+        const clip = await send("LM_JA_RECORDING", { word: data.word, kana: data.kana });
+        if (await play(clip)) { status.textContent = ""; return; }
+        if (!active()) return;
+      }
+      status.textContent = "合成朗读";
+      const engine = window.speechSynthesis;
+      const voices = engine?.getVoices?.().filter(voice => /^ja(?:-|$)/i.test(voice.lang)) || [];
+      const enhanced = voices.find(voice => /natural|neural|premium|enhanced/i.test(voice.name));
+      function speak(voice, onError) {
+        if (!active() || !voice) return false;
+        try {
+          const utterance = new SpeechSynthesisUtterance(spoken);
+          utterance.lang = "ja-JP";
+          utterance.voice = voice;
+          utterance.rate = 0.95;
+          utterance.onerror = () => { if (active()) onError(); };
+          utterance.onend = () => { if (active()) disposeSpeech = null; };
+          disposeSpeech = () => engine.cancel();
+          engine.speak(utterance);
+          return true;
+        } catch (_) { return false; }
+      }
+      const failed = () => { status.textContent = "未能播放日语读音，请重试"; };
+      async function synthesize() {
+        const clip = await send("LM_PRONOUNCE", { text: spoken, tl: "ja" });
+        if (await play(clip)) return;
+        if (active() && !speak(voices.find(voice => voice !== enhanced), failed)) failed();
+      }
+      if (!speak(enhanced, synthesize)) await synthesize();
+    });
+  }
+
   function textWithoutReading(node) {
     if (!node) return "";
     if (["rt", "rp"].includes(node.localName)) return "";
@@ -167,5 +276,5 @@ var lmJapaneseUi = (() => {
     return { ...(fullWord ? tokens[0] : {}), text: surface, surface, tokens, isPhrase: !fullWord, lang: selected[0]?.dataset.lang || "ja" };
   }
 
-  return { renderWords, bindGroup, cardHtml, selectionFrom, tokenFrom, textWithoutReading, identity, isKnown, display };
+  return { renderWords, bindGroup, cardHtml, pronunciationHtml, bindPronunciation, stopPronunciation, selectionFrom, tokenFrom, textWithoutReading, identity, isKnown, display };
 })();

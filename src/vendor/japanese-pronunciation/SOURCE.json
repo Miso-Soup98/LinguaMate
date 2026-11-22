@@ -1,0 +1,8 @@
+{
+  "pitchSource": "https://raw.githubusercontent.com/mifunetoshiro/kanjium/9ebca4589565c696e7c39e089e2e928ad65f678c/data/source_files/raw/accents.txt",
+  "pitchSourceSha256": "8bd0dd127dab32ceec94cb03ab1ba6b68858ea73421dfa1731af2f373deb4f20",
+  "audioSource": "https://api.github.com/repos/tofugu/japanese-vocabulary-pronunciation-audio/git/trees/9725e0e7d628ab616e8b14e126d3daa33eba8d36?recursive=1",
+  "license": "CC-BY-SA-4.0",
+  "pitchPairs": 107941,
+  "recordingPairs": 6355
+}

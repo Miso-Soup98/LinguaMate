@@ -927,6 +927,7 @@
   async function showDict(wordEl, phrase = null, previewOnHover = false) {
     contentTimeMs();
     if (!state.settings.enabled || state.adActive || !wordEl?.isConnected) return;
+    if (typeof lmJapaneseUi !== "undefined") lmJapaneseUi.stopPronunciation();
     ui.phraseActive = Boolean(phrase && !phrase.group);
     clearTimeout(hoverTimer); clearTimeout(hideTimer); pendingHoverWord = null;
     hoverWord?.classList.remove("lm-word-active");
@@ -970,6 +971,8 @@
     }
     const data = res.result || { word, translation: "" };
     const japanese = languageMatches(from, "ja") ? data.japanese || (phrase ? { surface: word, lemma: word, pos: "词组" } : japaneseHint) : undefined;
+    const japaneseAudio = japanese && typeof lmJapaneseUi !== "undefined";
+    const hasOriginal = Number.isFinite(cue?.start);
     const persistentJapanese = lmJapaneseClient.persistent(japanese);
     const saveForm = persistentJapanese?.lemma || word;
     const detailed = (/^en(?:-|$)/i.test(from) || japanese) && typeof lmWordCard !== "undefined";
@@ -979,7 +982,7 @@
     }).join("");
     ui.dict.innerHTML = `
       <div class="lm-dict-head"><div><div class="lm-dict-word">${escapeHtml(data.word || word)}</div>${detailed && data.entries?.length ? '<div class="lm-card-muted">词典首义 · 更多含义见下方</div>' : ""}<div class="lm-dict-trans">${escapeHtml(data.translation || "")}</div></div></div>
-      ${String(from).toLowerCase().startsWith("en") ? `<div class="lm-accents">
+      ${japaneseAudio ? lmJapaneseUi.pronunciationHtml(japanese, data.pronunciation, hasOriginal) : String(from).toLowerCase().startsWith("en") ? `<div class="lm-accents">
         <button type="button" data-accent="us">美式<span class="lm-ipa">${escapeHtml(data.phoneticUs || data.phonetic || "")}</span></button>
         <button type="button" data-accent="uk">英式<span class="lm-ipa">${escapeHtml(data.phoneticUk || data.phonetic || "")}</span></button>
       </div>` : `<div class="lm-accents"><button type="button" data-accent="read">朗读<span class="lm-ipa">${escapeHtml(data.phonetic || "")}</span></button></div>`}
@@ -992,7 +995,12 @@
       const hint = index < 0 ? null : { partIndex: index, groupStart: group.start, groupSurface: group.surface };
       showDict(wordEl, hint ? { surface: group.parts[index].surface, context: context, group, hint } : null);
     });
-    ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
+    if (japaneseAudio) lmJapaneseUi.bindPronunciation(ui.dict, {
+      analysis: japanese, data: data.pronunciation, word, send,
+      isCurrent: () => token === lookupToken,
+      replay: hasOriginal ? () => seekTo(cue.start, true) : null
+    });
+    else ui.dict.querySelectorAll("[data-accent]").forEach((button) => {
       button.addEventListener("click", () => send("LM_PRONOUNCE", {
         text: word,
         tl: String(from).toLowerCase().startsWith("en") ? button.dataset.accent === "uk" ? "en-GB" : "en-US" : from,
@@ -1046,6 +1054,7 @@
   }
 
   function hideDict() {
+    if (typeof lmJapaneseUi !== "undefined") lmJapaneseUi.stopPronunciation();
     clearTimeout(hoverTimer);
     clearTimeout(hideTimer);
     pendingHoverWord = null;

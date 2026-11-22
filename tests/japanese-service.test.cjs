@@ -311,3 +311,28 @@ test("spoken kana selects a dictionary reading only for a unique whole caption m
   const tomorrow = await service.audioReadings("明日はいい天気ですね。", "あすわいいてんきですね");
   assert.equal(tomorrow[0].reading, "あす");
 });
+
+test("Japanese pronunciation keys distinguish homophones, preserve variants and match recordings exactly", async () => {
+  const { service } = harness();
+  for (const [word, kana, expected] of [
+    ["橋", "はし", [2]], ["箸", "はし", [1]], ["鼻", "はな", [0]], ["学校", "がっこう", [0]],
+    ["食べました", "たべる", [2]], ["男", "おとこ", [3]]
+  ]) {
+    const card = await service.lookup(word, "en", "", {}, true);
+    assert.equal(card.pronunciation.kana, kana, word);
+    assert.deepEqual(Array.from(card.pronunciation.pitch), expected, word);
+  }
+  const variant = await service.lookup("映画", "en", "", {}, true);
+  assert.equal(variant.pronunciation.kana, "えいが");
+  assert.deepEqual(Array.from(variant.pronunciation.pitch), [1, 0]);
+  const school = await service.lookup("学校", "en", "", {}, true);
+  assert.equal(school.pronunciation.nativeRecording, true);
+  assert.equal(school.pronunciation.speechText, "学校");
+  const url = await service.recordingUrl("学校", "がっこう");
+  assert.equal(new URL(url).hostname, "raw.githubusercontent.com");
+  assert.match(decodeURIComponent(url), /lib\/mp3\/学校【がっこう】\.mp3$/);
+  assert.equal(await service.recordingUrl("学校", "がこう"), "");
+  assert.equal(await service.recordingUrl("https://example.com/audio", "がっこう"), "");
+  const phrase = await service.lookup("学校に行く", "en", "", { isPhrase: true }, true);
+  assert.equal(phrase.pronunciation, null);
+});

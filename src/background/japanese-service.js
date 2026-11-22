@@ -3,6 +3,7 @@
   let tokenizerPromise;
   let dictionaryPromise;
   let compoundsPromise;
+  let pronunciationPromise;
   const shards = new Map();
   const sentences = new Map();
   const baseReadings = new Map();
@@ -55,6 +56,51 @@
     if (!compoundsPromise) compoundsPromise = readDictionaryFile("compounds")
       .catch((error) => { compoundsPromise = null; throw error; });
     return compoundsPromise;
+  }
+
+  function pronunciations() {
+    if (!pronunciationPromise) {
+      pronunciationPromise = (async () => {
+        const url = chrome.runtime.getURL("src/vendor/japanese-pronunciation/index.json.gz");
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("japanese_pronunciation_unavailable");
+        return new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).json();
+      })().catch(() => {
+        pronunciationPromise = null;
+        return null;
+      });
+    }
+    return pronunciationPromise;
+  }
+
+  async function pronunciationFor(analysis, entries) {
+    if (analysis.isPhrase || analysis.grammar || !analysis.baseReading) return null;
+    const word = analysis.lemma.normalize("NFKC");
+    const kana = indexKey(analysis.baseReading);
+    const beats = lmJapanese.moras(kana);
+    if (!beats.length) return null;
+    const data = await pronunciations();
+    if (!data) return null;
+    const accents = Object.hasOwn(data.pitch, word) ? data.pitch[word] : {};
+    const recordings = Object.hasOwn(data.recordings, word) ? data.recordings[word] : {};
+    const dictionaryReadings = entries.flatMap(entry => entry.r.map(reading => indexKey(reading.t)));
+    const readings = new Set([...Object.keys(accents), ...Object.keys(recordings), ...dictionaryReadings]);
+    return {
+      word, kana,
+      pitch: (accents[kana] || []).filter(number => number >= 0 && number <= beats.length),
+      nativeRecording: Boolean(recordings[kana]),
+      // Written forms preserve lexical prosody for the synthesizer when the
+      // pronunciation index has one supported reading. Otherwise keep the kana.
+      speechText: readings.size === 1 && readings.has(kana) ? word : kana
+    };
+  }
+
+  async function recordingUrl(word, kana) {
+    if (typeof word !== "string" || word.length > 100 || !/^[ぁ-ゖー]{1,100}$/u.test(kana || "")) return "";
+    const data = await pronunciations();
+    if (!data || !Object.hasOwn(data.recordings, word)) return "";
+    const file = data.recordings[word][kana];
+    return file ? `https://raw.githubusercontent.com/tofugu/japanese-vocabulary-pronunciation-audio/${data.audioRevision}/lib/mp3/${encodeURIComponent(file)}` : "";
   }
 
   function extendedDictionary(word) {
@@ -530,10 +576,11 @@
     }
     analysis.termKey = lmJapanese.termKey(analysis);
     analysis.grammarNotes = grammarNotes(analysis);
+    const pronunciation = await pronunciationFor(analysis, chosen);
     const dictionaryTranslation = glosses[0] || definitions[0] || "";
     return {
       word: surface, translation: dictionaryTranslation || translated.text || "", phonetic: analysis.baseReading || analysis.reading,
-      senses: [], entries, japanese: analysis, context: context || "",
+      senses: [], entries, japanese: analysis, pronunciation, context: context || "",
       dictionarySource: dict ? "JMdict / EDRDG" : "", dictionaryUrl: "https://www.edrdg.org/jmdict/j_jmdict.html",
       dictionaryDate: dict ? dict.date : "", dictionaryAvailable: Boolean(dict),
       dictionaryHeadword: lexical.headword,
@@ -546,5 +593,5 @@
     };
   }
 
-  globalThis.lmJapaneseService = { analyze, lookup, matchingEntries, audioReadings };
+  globalThis.lmJapaneseService = { analyze, lookup, matchingEntries, audioReadings, recordingUrl };
 })();
