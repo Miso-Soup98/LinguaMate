@@ -43,6 +43,7 @@
   let audioReview = null;
 
   const ui = {};
+  const playbackProgress = typeof lmYoutubeProgress !== "undefined" ? lmYoutubeProgress : null;
 
   function $(sel, root = document) {
     return root.querySelector(sel);
@@ -1576,6 +1577,7 @@
   function seekTo(ms, play) {
     const video = videoEl();
     if (!video) return;
+    playbackProgress?.skip();
     video.currentTime = Math.max(0, ms / 1000 + 0.01);
     state.lastTickMs = null;
     if (play) video.play().catch(() => {});
@@ -2070,6 +2072,7 @@
     if (!state.settings.enabled) return;
     const video = videoEl();
     if (!video) return;
+    if (hasBooted && playbackProgress) playbackProgress.observe(video, currentVideoId());
     const ms = video.currentTime * 1000;
     const previous = state.cues[state.activeIndex];
     const elapsed = state.lastTickMs === null ? Infinity : ms - state.lastTickMs;
@@ -2087,6 +2090,7 @@
     if (ev.key === "Escape") { hideDict(); if (ui.phraseQuery) ui.phraseQuery.hidden = true; return; }
     if (!state.settings.enabled || ev.ctrlKey || ev.altKey || ev.metaKey || isTyping(ev.target)) return;
     const key = ev.key.toLowerCase();
+    if (/^(?:[0-9]|arrowleft|arrowright|j|l|home|end)$/.test(key)) playbackProgress?.skip();
     if (!["a", "s", "d"].includes(key)) return;
     ev.preventDefault();
     ev.stopPropagation();
@@ -2181,7 +2185,11 @@
       placePanel();
       applyCaptionVisibility();
       state.lastTickMs = null;
-      if (!state.settings.enabled) { state.loadGen += 1; hideDict(); }
+      if (!state.settings.enabled) {
+        playbackProgress?.skip();
+        state.loadGen += 1;
+        hideDict();
+      }
       else {
         renderCurrent();
         if (state.tab === "subs" && !result.reloadCaptions) renderTranscript();
@@ -2226,6 +2234,14 @@
     clearAudioReview();
     if (typeof lmYoutubeAudio !== "undefined") lmYoutubeAudio.stop();
   });
+  if (playbackProgress) {
+    window.addEventListener("pagehide", () => {
+      playbackProgress.save(hasBooted && state.settings.enabled ? currentVideoId() : "");
+    });
+    document.addEventListener("pointerdown", event => {
+      if (event.target.closest?.(".ytp-progress-bar-container, .ytp-progress-bar")) playbackProgress.skip();
+    }, true);
+  }
   document.addEventListener("fullscreenchange", () => {
     placePanel();
     updatePhraseQuery();

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDesc__",
-  "version": "1.15.0",
+  "version": "1.15.1",
   "default_locale": "zh_CN",
   "action": {
     "default_title": "__MSG_extName__",
@@ -90,6 +90,7 @@
         "src/shared/word-card.js",
         "src/shared/dict-session.js",
         "src/content/youtube-audio.js",
+        "src/content/youtube-progress.js",
         "src/content/youtube.js"
       ],
       "css": ["src/content/youtube.css"],
